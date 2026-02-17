@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, Logger, BadRequestException, Inject, HttpStatus, HttpException } from '@nestjs/common';
+import { createHash } from 'crypto';
+import { Injectable, NotFoundException, Logger, BadRequestException, Inject, HttpStatus, HttpException, ForbiddenException } from '@nestjs/common';
 import { IsNull, MoreThanOrEqual, Not, Repository, LessThanOrEqual, Between, In, LessThan, QueryFailedError, DataSource } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -70,6 +71,9 @@ export class AttendanceService {
 	private readonly logger = new Logger(AttendanceService.name);
 	private readonly CACHE_PREFIX = 'attendance:';
 	private readonly CACHE_TTL: number;
+	/** TTL in ms for overtime analytics cache (short to reflect new check-outs). */
+	private readonly OVERTIME_ANALYTICS_CACHE_TTL_MS: number;
+	private static readonly OVERTIME_CACHE_KEY_MAX_LENGTH = 400;
 
 	// Validation constants for external machine consolidations
 	private readonly MIN_SHIFT_DURATION_MINUTES = 30; // Minimum 30 minutes between check-in and check-out
@@ -104,6 +108,11 @@ export class AttendanceService {
 		private readonly dataSource: DataSource,
 	) {
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
+		const overtimeTtlSeconds = parseInt(
+			process.env.OVERTIME_ANALYTICS_CACHE_TTL || process.env.CACHE_EXPIRATION_TIME || '60',
+			10,
+		);
+		this.OVERTIME_ANALYTICS_CACHE_TTL_MS = overtimeTtlSeconds * 1000;
 	}
 
 	// ======================================================
@@ -121,6 +130,29 @@ export class AttendanceService {
 	 */
 	private getListCacheKey(orgId?: string, effectiveBranchId?: number): string {
 		return this.getCacheKey(`all_${orgId || 'no-org'}_${effectiveBranchId ?? 'no-branch'}`);
+	}
+
+	/**
+	 * Build a deterministic cache key for overtime analytics.
+	 * Uses sorted record UIDs and exclude dates; hashes if key would exceed length limit.
+	 */
+	private getOvertimeAnalyticsCacheKey(
+		records: Attendance[],
+		organizationId?: string,
+		excludeOvertimeDates?: string[],
+	): string {
+		const uids = records
+			.map((r) => r.uid)
+			.filter((uid): uid is number => uid != null)
+			.sort((a, b) => a - b)
+			.join(',');
+		const excludeDates = (excludeOvertimeDates ?? []).slice().sort().join(',');
+		const rawKey = `overtime:${organizationId ?? 'no-org'}:${uids}:${excludeDates}`;
+		if (rawKey.length > AttendanceService.OVERTIME_CACHE_KEY_MAX_LENGTH) {
+			const hash = createHash('sha256').update(rawKey).digest('hex');
+			return this.getCacheKey(`overtime:${hash}`);
+		}
+		return this.getCacheKey(rawKey);
 	}
 
 	/**
@@ -4497,9 +4529,10 @@ export class AttendanceService {
 	/**
 	 * Get comprehensive attendance metrics for a specific user
 	 * @param userId - User ID to get metrics for (string)
+	 * @param orgId - Optional org ID (Clerk org ID or ref); when provided, validates user belongs to org
 	 * @returns Comprehensive attendance metrics including first/last attendance and time breakdowns
 	 */
-	public async getUserAttendanceMetrics(userId: string): Promise<{
+	public async getUserAttendanceMetrics(userId: string, orgId?: string): Promise<{
 		message: string;
 		metrics: {
 			firstAttendance: {
@@ -4588,10 +4621,19 @@ export class AttendanceService {
 				: { uid: Number(userIdStr) };
 			const userExists = await this.userRepository.findOne({
 				where: userWhere,
+				relations: orgId ? ['organisation'] : undefined,
 			});
 
 			if (!userExists) {
 				throw new NotFoundException(`User with ID ${userId} not found`);
+			}
+
+			if (orgId) {
+				const userOrgRef = userExists.organisation?.clerkOrgId ?? userExists.organisation?.ref ?? userExists.organisationRef;
+				const matchesOrg = userOrgRef != null && (String(userOrgRef) === String(orgId));
+				if (!matchesOrg) {
+					throw new ForbiddenException('User does not belong to the specified organization');
+				}
 			}
 
 			const clerkUserId = userExists.clerkUserId;
@@ -5337,17 +5379,31 @@ export class AttendanceService {
 		overtimeFrequency: number;
 		longestOvertimeShift: number;
 	}> {
+		const cacheKey = this.getOvertimeAnalyticsCacheKey(records, organizationId, excludeOvertimeDates);
+		const cached = await this.cacheManager.get<{
+			totalOvertimeHours: number;
+			averageOvertimePerShift: number;
+			overtimeFrequency: number;
+			longestOvertimeShift: number;
+		}>(cacheKey);
+		if (cached != null) {
+			this.logger.debug(`Overtime analytics cache hit (${records.length} records)`);
+			return cached;
+		}
+
 		try {
 			// Filter only completed shifts (must have checkOut)
 			const completedShifts = records.filter((r) => r.checkIn && r.checkOut);
 
 			if (completedShifts.length === 0) {
-				return {
+				const emptyResult = {
 					totalOvertimeHours: 0,
 					averageOvertimePerShift: 0,
 					overtimeFrequency: 0,
 					longestOvertimeShift: 0,
 				};
+				await this.cacheManager.set(cacheKey, emptyResult, this.OVERTIME_ANALYTICS_CACHE_TTL_MS);
+				return emptyResult;
 			}
 
 			let totalOvertimeMinutes = 0;
@@ -5465,12 +5521,14 @@ export class AttendanceService {
 				`frequency=${overtimeFrequency}%, longest=${longestOvertimeShift}h for ${completedShifts.length} shifts`,
 			);
 
-			return {
+			const result = {
 				totalOvertimeHours,
 				averageOvertimePerShift,
 				overtimeFrequency,
 				longestOvertimeShift,
 			};
+			await this.cacheManager.set(cacheKey, result, this.OVERTIME_ANALYTICS_CACHE_TTL_MS);
+			return result;
 		} catch (error) {
 			this.logger.error(`Error calculating overtime analytics: ${error.message}`, error.stack);
 			return {
@@ -5492,6 +5550,7 @@ export class AttendanceService {
 	 * @param startDate - Start date for metrics calculation
 	 * @param endDate - End date for metrics calculation
 	 * @param includeInsights - Whether to include performance insights
+	 * @param orgId - Optional org ID (Clerk org ID or ref); when provided, validates user belongs to org
 	 * @returns Comprehensive user metrics including analytics and performance insights
 	 */
 	public async getUserMetricsForDateRange(
@@ -5499,6 +5558,7 @@ export class AttendanceService {
 		startDate: string,
 		endDate: string,
 		includeInsights: boolean = true,
+		orgId?: string,
 	): Promise<UserMetricsResponseDto> {
 		try {
 			// Validate input (user ref as string: clerk id or numeric string)
@@ -5527,6 +5587,14 @@ export class AttendanceService {
 
 			if (!userExists) {
 				throw new NotFoundException(`User with ID ${userId} not found`);
+			}
+
+			if (orgId) {
+				const userOrgRef = userExists.organisation?.clerkOrgId ?? userExists.organisation?.ref ?? userExists.organisationRef;
+				const matchesOrg = userOrgRef != null && (String(userOrgRef) === String(orgId));
+				if (!matchesOrg) {
+					throw new ForbiddenException('User does not belong to the specified organization');
+				}
 			}
 
 			const ownerFilter = { ownerClerkUserId: userExists.clerkUserId };

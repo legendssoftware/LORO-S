@@ -15,6 +15,7 @@ import {
 	ApiQuery,
 	ApiProperty,
 	ApiExtraModels,
+	ApiHeader,
 } from '@nestjs/swagger';
 import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 import { Controller, Post, Body, Param, Get, UseGuards, Query, UseInterceptors, Req, BadRequestException, NotFoundException } from '@nestjs/common';
@@ -46,6 +47,7 @@ import { OvertimeReminderService } from './services/overtime.reminder.service';
 import { UserService } from '../user/user.service';
 import { MonthlyMetricsQueryDto } from './dto/monthly-metrics.dto';
 import { ClerkService } from '../clerk/clerk.service';
+import { isPublic } from '../decorators/public.decorator';
 
 // Reusable Schema Definitions for Swagger Documentation
 export class UserProfileSchema {
@@ -216,6 +218,27 @@ export class AttendanceController {
 		}
 		const numValue = Number(value);
 		return isNaN(numValue) || !isFinite(numValue) ? undefined : numValue;
+	}
+
+	/**
+	 * Resolve organization ID for public metrics/report endpoints.
+	 * Order: token (getClerkOrgId) → x-org-id header → fromBody → fromQuery.
+	 * @throws BadRequestException if no org context is found
+	 */
+	private resolveOrgId(
+		req: AuthenticatedRequest,
+		fromBody?: string | number,
+		fromQuery?: string | number,
+	): string {
+		const fromToken = getClerkOrgId(req);
+		const fromHeader = req.headers['x-org-id'] as string | undefined;
+		const raw = fromToken ?? fromHeader ?? fromBody ?? fromQuery;
+		if (raw == null || raw === '') {
+			throw new BadRequestException(
+				'Organization context required. Send a token or x-org-id header or orgId in body/query.',
+			);
+		}
+		return typeof raw === 'string' ? raw : String(raw);
 	}
 
 	@Post('in')
@@ -2857,6 +2880,7 @@ export class AttendanceController {
 	// ======================================================
 
 	@Get('metrics')
+	@isPublic()
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -2871,7 +2895,7 @@ export class AttendanceController {
 	@ApiOperation({
 		summary: '📈 Get my attendance metrics (token)',
 		description:
-			'Retrieves attendance metrics for the authenticated user. User is derived from the token; no path param.',
+			'Retrieves attendance metrics for the authenticated user. User is derived from the token; no path param. Public: no token required for other metrics; for self metrics send a token. When no token, use GET /att/metrics/:uid with x-org-id header.',
 	})
 	@ApiOkResponse({
 		description: '✅ Current user attendance metrics',
@@ -2885,6 +2909,11 @@ export class AttendanceController {
 	})
 	@ApiUnauthorizedResponse({ description: '🔒 Unauthorized - Authentication required' })
 	async getUserAttendanceMetricsSelf(@Req() req: AuthenticatedRequest) {
+		if (!req.user?.uid && !req.user?.clerkUserId) {
+			throw new BadRequestException(
+				'Authentication required for self metrics. Use GET /att/metrics/:uid with x-org-id header for a specific user.',
+			);
+		}
 		const uid = getRequestingUserUid(req);
 		if (uid == null || uid <= 0) {
 			throw new BadRequestException('User ID not found in token');
@@ -2893,6 +2922,12 @@ export class AttendanceController {
 	}
 
 	@Get('metrics/:uid')
+	@isPublic()
+	@ApiHeader({
+		name: 'x-org-id',
+		required: false,
+		description: 'Organization ID (Clerk org ID or ref). For public access without token, send this header or orgId query. With token, org is taken from token.',
+	})
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -2997,6 +3032,11 @@ Retrieves detailed attendance analytics for a specific user including historical
 				value: 123,
 			},
 		},
+	})
+	@ApiQuery({
+		name: 'orgId',
+		required: false,
+		description: 'Organization ID (Clerk org ID or ref). For public access without token, send x-org-id header or this query.',
 	})
 	@ApiOkResponse({
 		description: '✅ Attendance metrics retrieved successfully',
@@ -3192,9 +3232,9 @@ Retrieves detailed attendance analytics for a specific user including historical
 			},
 		},
 	})
-	async getUserAttendanceMetrics(@Param('uid') uid: string) {
-		// Pass raw uid (clerk id or numeric string) to service; resolution happens there
-		return this.attendanceService.getUserAttendanceMetrics(uid);
+	async getUserAttendanceMetrics(@Param('uid') uid: string, @Req() req: AuthenticatedRequest) {
+		const orgId = this.resolveOrgId(req, undefined, req.query['orgId'] as string | number | undefined);
+		return this.attendanceService.getUserAttendanceMetrics(uid, orgId);
 	}
 
 	@Get('streak/current-week')
@@ -3263,10 +3303,16 @@ Retrieves detailed attendance analytics for a specific user including historical
 	}
 
 	@Post('metrics/monthly')
+	@isPublic()
+	@ApiHeader({
+		name: 'x-org-id',
+		required: false,
+		description: 'Organization ID for public access without token. With token, org from token or body.',
+	})
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.HR)
 	@ApiOperation({
 		summary: 'Get monthly attendance metrics for all users',
-		description: 'Monthly metrics (shifts, hours, overtime) for org. Body: year, month, optional excludeOvertimeDates, branchId. Org from auth or body.',
+		description: 'Monthly metrics (shifts, hours, overtime) for org. Body: year, month, optional excludeOvertimeDates, branchId. Org from token, x-org-id header, or body. Public: no token required when x-org-id or body orgId is sent.',
 	})
 	@ApiBody({
 		type: MonthlyMetricsQueryDto,
@@ -3396,12 +3442,7 @@ Retrieves detailed attendance analytics for a specific user including historical
 		@Body() queryDto: MonthlyMetricsQueryDto,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const rawOrgId = queryDto.orgId ?? getClerkOrgId(req);
-		if (rawOrgId == null || rawOrgId === '') {
-			throw new BadRequestException('Organization context required');
-		}
-		// Ensure orgId is always a string (Clerk org ID)
-		const orgId: string = typeof rawOrgId === 'string' ? rawOrgId : String(rawOrgId);
+		const orgId = this.resolveOrgId(req, queryDto.orgId, undefined);
 		const userAccessLevel = req.user?.accessLevel;
 
 		return this.attendanceService.getMonthlyMetricsForAllUsers(
@@ -3415,12 +3456,18 @@ Retrieves detailed attendance analytics for a specific user including historical
 	}
 
 	@Get('report')
+	@isPublic()
+	@ApiHeader({
+		name: 'x-org-id',
+		required: false,
+		description: 'Organization ID for public access without token. With token, org from token. Alternatively use orgId query.',
+	})
 	@UseInterceptors(CacheInterceptor)
 	@CacheTTL(300) // Cache for 5 minutes
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.HR)
 	@ApiOperation({
 		summary: 'Generate organization attendance report',
-		description: 'Org-wide attendance report. Query: dateFrom, dateTo, branchId, role, includeUserDetails. Cached 5 min. Admin/Manager/HR.',
+		description: 'Org-wide attendance report. Query: dateFrom, dateTo, branchId, role, includeUserDetails, orgId. Cached 5 min. Public: send x-org-id header or orgId query when no token.',
 	})
 	@ApiQuery({
 		name: 'dateFrom',
@@ -4098,10 +4145,7 @@ Retrieves detailed attendance analytics for a specific user including historical
 		},
 	})
 	getOrganizationReport(@Query() queryDto: OrganizationReportQueryDto, @Req() req: AuthenticatedRequest) {
-		const orgId = getClerkOrgId(req);
-		if (!orgId) {
-			throw new BadRequestException('Organization context required');
-		}
+		const orgId = this.resolveOrgId(req, undefined, queryDto.orgId);
 		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userAccessLevel = req.user?.accessLevel;
 
@@ -5146,14 +5190,25 @@ Manually triggers the overtime policy check system to identify employees working
 		},
 	})
 	@Get('metrics/user/:ref')
+	@isPublic()
+	@ApiHeader({
+		name: 'x-org-id',
+		required: false,
+		description: 'Organization ID for public access without token. With token, org from token.',
+	})
 	@ApiOperation({
 		summary: 'Get user attendance metrics for a date range',
 		description:
-			'Retrieves detailed attendance metrics and performance insights for a specific user within a date range',
+			'Retrieves detailed attendance metrics and performance insights for a specific user within a date range. Public: send x-org-id header or orgId query when no token.',
 	})
 	@ApiParam({ name: 'ref', description: 'User ID (string)', type: 'string' })
 	@ApiQuery({ name: 'startDate', description: 'Start date (YYYY-MM-DD)', required: true })
 	@ApiQuery({ name: 'endDate', description: 'End date (YYYY-MM-DD)', required: true })
+	@ApiQuery({
+		name: 'orgId',
+		required: false,
+		description: 'Organization ID for public access without token. With token, org from token.',
+	})
 	@ApiQuery({
 		name: 'includeInsights',
 		description: 'Include performance insights',
@@ -5176,12 +5231,9 @@ Manually triggers the overtime policy check system to identify employees working
 		@Query('includeInsights') includeInsights: boolean = true,
 		@Req() req: AuthenticatedRequest,
 	): Promise<UserMetricsResponseDto> {
-		// Validate access - users can only view their own metrics unless they're admin/owner
-		if (
-			req.user.accessLevel !== AccessLevel.ADMIN &&
-			req.user.accessLevel !== AccessLevel.OWNER &&
-			String(req.user.uid) !== ref
-		) {
+		const orgId = this.resolveOrgId(req, undefined, req.query['orgId'] as string | number | undefined);
+		// Validate access when authenticated - users can only view their own metrics unless they're admin/owner
+		if (req.user?.accessLevel && req.user.accessLevel !== AccessLevel.ADMIN && req.user.accessLevel !== AccessLevel.OWNER && String(req.user.uid) !== ref) {
 			throw new Error("You do not have permission to view this user's metrics");
 		}
 
@@ -5190,6 +5242,7 @@ Manually triggers the overtime policy check system to identify employees working
 			startDate,
 			endDate,
 			typeof includeInsights === 'string' ? (includeInsights === 'false' ? false : true) : includeInsights,
+			orgId,
 		);
 	}
 

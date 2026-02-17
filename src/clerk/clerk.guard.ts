@@ -33,35 +33,60 @@ export class ClerkAuthGuard implements CanActivate {
 			context.getClass(),
 		]);
 
-		if (isPublic) {
-			return true;
-		}
-	
 		// STEP 1: Extract token (synchronous)
 		const authHeader = request.headers.authorization;
 		const tokenHeader = request.headers.token as string;
 		const token = tokenHeader || (authHeader ? authHeader.split(' ')[1] : undefined);
+
+		// Public route: allow without token; if token is present, parse it and attach user/org for optional auth
+		if (isPublic) {
+			if (!token) {
+				return true;
+			}
+			// Token present on public route: decode and attach user/tokenOrgId so getClerkOrgId(req) works
+			const attached = await this.attachUserFromToken(request, token, true);
+			if (!attached) {
+				return true; // Invalid token on public route - allow request without user
+			}
+			return true;
+		}
 		
 		if (!token) {
 			throw new UnauthorizedException('No authentication token provided');
 		}
 
+		await this.attachUserFromToken(request, token, false);
+		return true;
+	}
+
+	/**
+	 * Decode token, validate, attach request['user'] and request['tokenOrgId'], and optionally enhance from DB.
+	 * @param request - Express request
+	 * @param token - JWT token string
+	 * @param optional - If true, invalid token does not throw; request is left without user. If false, throws on invalid token.
+	 * @returns true if user was attached, false if optional and token invalid
+	 */
+	private async attachUserFromToken(request: Request, token: string, optional: boolean = false): Promise<boolean> {
 		// STEP 2: Decode token IMMEDIATELY (synchronous)
 		let decoded: any;
 		try {
 			decoded = this.jwtService.decode(token, { complete: true });
 			if (!decoded?.payload) {
+				if (optional) return false;
 				throw new UnauthorizedException('Invalid token format');
 			}
 		} catch (decodeError) {
+			if (optional) return false;
 			throw new UnauthorizedException('Invalid token');
 		}
 
 		// STEP 3: Validate token (synchronous)
 		if (decoded.payload.exp && Date.now() >= decoded.payload.exp * 1000) {
+			if (optional) return false;
 			throw new UnauthorizedException('Token expired');
 		}
 		if (!decoded.payload.iss?.includes('clerk')) {
+			if (optional) return false;
 			throw new UnauthorizedException('Invalid token issuer');
 		}
 
@@ -75,6 +100,7 @@ export class ClerkAuthGuard implements CanActivate {
 		);
 
 		if (!clerkUserId) {
+			if (optional) return false;
 			throw new UnauthorizedException('Invalid token: missing user ID');
 		}
 
@@ -349,6 +375,7 @@ export class ClerkAuthGuard implements CanActivate {
 
 		// Validate that user has required fields
 		if (!finalUser || !finalUser.clerkUserId) {
+			if (optional) return false;
 			throw new UnauthorizedException('Invalid user object: missing required fields');
 		}
 

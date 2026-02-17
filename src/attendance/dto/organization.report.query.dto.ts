@@ -51,4 +51,13 @@ export class OrganizationReportQueryDto {
     required: false,
   })
   includeUserDetails?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @ApiProperty({
+    description: 'Organization ID (Clerk org ID or ref). Required when no auth token; use x-org-id header or this query param for public access.',
+    example: 'org_2abc123',
+    required: false,
+  })
+  orgId?: string;
 } 
