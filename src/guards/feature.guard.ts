@@ -1,6 +1,7 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException, Logger } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { FEATURE_KEY } from '../decorators/require-feature.decorator';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { PLAN_FEATURES } from '../lib/constants/license-features';
 
 @Injectable()
@@ -12,14 +13,23 @@ export class FeatureGuard implements CanActivate {
 	canActivate(context: ExecutionContext): boolean {
 		const request = context.switchToHttp().getRequest();
 		const path = `${request.method} ${request.path ?? request.url}`;
+		const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+			context.getHandler(),
+			context.getClass(),
+		]);
 		const requiredFeatures = this.reflector.getAllAndOverride<string[]>(FEATURE_KEY, [
 			context.getHandler(),
 			context.getClass(),
 		]);
 
-		this.logger.log(`[FeatureGuard] canActivate: path=${path}, requiredFeatures=${requiredFeatures?.length ? requiredFeatures.join(',') : 'none'}, user.role=${request['user']?.role ?? 'n/a'}`);
+		this.logger.log(`[FeatureGuard] canActivate: path=${path}, isPublic=${isPublic}, requiredFeatures=${requiredFeatures?.length ? requiredFeatures.join(',') : 'none'}, user.role=${request['user']?.role ?? 'n/a'}`);
 
 		if (!requiredFeatures) {
+			return true;
+		}
+
+		// Skip license/feature check for public routes (e.g. public metrics endpoints that accept x-org-id)
+		if (isPublic) {
 			return true;
 		}
 
