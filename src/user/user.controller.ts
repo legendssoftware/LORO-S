@@ -1350,9 +1350,9 @@ Retrieves detailed information about a specific user by their unique reference i
 	)
 	@ApiParam({
 		name: 'ref',
-		description: 'User reference code or unique identifier',
-		type: 'number',
-		example: 123,
+		description: 'User reference: numeric uid (e.g. 123) or Clerk user ID (e.g. user_2xxx)',
+		type: 'string',
+		example: '123',
 	})
 	@ApiOkResponse({
 		description: '✅ User retrieved successfully',
@@ -1548,7 +1548,7 @@ Retrieves detailed information about a specific user by their unique reference i
 		},
 	})
 	findOne(
-		@Param('ref') ref: number,
+		@Param('ref') ref: string,
 		@Req() req: AuthenticatedRequest,
 	): Promise<{ user: Omit<User, 'password'> | null; message: string }> {
 		const accessScope = this.getAccessScope(req.user);
@@ -1612,9 +1612,9 @@ Updates an existing user's information with comprehensive validation and audit t
 	)
 	@ApiParam({
 		name: 'ref',
-		description: 'User reference code or unique identifier',
-		type: 'number',
-		example: 123,
+		description: 'User reference: numeric uid (e.g. 123) or Clerk user ID (e.g. user_2xxx)',
+		type: 'string',
+		example: '123',
 	})
 	@ApiBody({
 		type: UpdateUserDto,
@@ -1723,7 +1723,7 @@ Updates an existing user's information with comprehensive validation and audit t
 		},
 	})
 	@ApiOkResponse({
-		description: '✅ User updated successfully',
+		description: '✅ User updated successfully. Returns the updated user object.',
 		schema: {
 			type: 'object',
 			properties: {
@@ -1732,8 +1732,21 @@ Updates an existing user's information with comprehensive validation and audit t
 					example: 'Success',
 					description: 'Success message from environment variable (SUCCESS_MESSAGE)',
 				},
+				user: {
+					type: 'object',
+					description: 'Updated user (same shape as GET /user/:ref)',
+					properties: {
+						uid: { type: 'number', example: 123 },
+						name: { type: 'string', example: 'John' },
+						surname: { type: 'string', example: 'Doe' },
+						email: { type: 'string', example: 'john.doe@loro.co.za' },
+						userref: { type: 'string', example: 'USR123456', nullable: true },
+						hrID: { type: 'number', example: 54321, nullable: true },
+						branch: { type: 'object', nullable: true, properties: { uid: { type: 'number' } } },
+					},
+				},
 			},
-			required: ['message'],
+			required: ['message', 'user'],
 		},
 	})
 	@ApiNotFoundResponse({
@@ -1825,10 +1838,10 @@ Updates an existing user's information with comprehensive validation and audit t
 		},
 	})
 	update(
-		@Param('ref') ref: number,
+		@Param('ref') ref: string,
 		@Body() updateUserDto: UpdateUserDto,
 		@Req() req: AuthenticatedRequest,
-	): Promise<{ message: string }> {
+	): Promise<{ message: string; user: User }> {
 		const accessScope = this.getAccessScope(req.user);
 
 		// 🔍 DEBUG: Log the access decision

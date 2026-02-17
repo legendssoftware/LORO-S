@@ -447,7 +447,7 @@ export class RewardsService {
     data: {
       rankings: Array<{
         position: number;
-        points: number;
+        points: number | null;
         user: {
           uid: number;
           name: string;
@@ -471,7 +471,7 @@ export class RewardsService {
 
       let rankings: Array<{
         position: number;
-        points: number;
+        points: number | null;
         user: {
           uid: number;
           name: string;
@@ -523,7 +523,7 @@ export class RewardsService {
           const u = ut.user;
           return {
             position: i + 1,
-            points: ut.currentSalesAmount,
+            points: null, // Do not expose sales amounts; client shows position only
             user: {
               uid: u.uid,
               name: u.name,
@@ -538,12 +538,13 @@ export class RewardsService {
       }
 
       const totalParticipants = rankings.length;
+      const topThree = rankings.slice(0, 3);
       this.logger.log(`${logPrefix} - ${totalParticipants} participants, currentUserPosition=${currentUserPosition}`);
 
       return {
         message: process.env.SUCCESS_MESSAGE ?? 'Success',
         data: {
-          rankings,
+          rankings: topThree,
           currentUserPosition,
           metadata: {
             criteria: by,

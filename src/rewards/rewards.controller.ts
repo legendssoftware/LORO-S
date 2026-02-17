@@ -236,7 +236,7 @@ export class RewardsController {
 	)
 	@ApiOperation({
 		summary: '🏆 Get position-only rankings (by XP or sales)',
-		description: 'Returns rankings of users/salespeople by XP or sales. Position-only (no raw metrics). By sales: only users with sales target; currentUserPosition null if requester has no target.',
+		description: 'Returns top 3 rankings of users/salespeople by XP or sales. Rankings array is limited to top 3. currentUserPosition is the requester\'s actual rank (1-based), or null if they are not in the rankings.',
 		operationId: 'getRankings',
 	})
 	@ApiQuery({ name: 'by', required: true, enum: ['xp', 'sales'], description: 'Rank by XP or sales' })
@@ -252,11 +252,13 @@ export class RewardsController {
 					properties: {
 						rankings: {
 							type: 'array',
+							maxItems: 3,
+							description: 'Top 3 ranked users',
 							items: {
 								type: 'object',
 								properties: {
 									position: { type: 'number' },
-									points: { type: 'number', description: 'XP points (if by=xp) or sales amount (if by=sales)' },
+									points: { type: 'number', nullable: true, description: 'XP points when by=xp; null when by=sales (position-only display)' },
 									user: {
 										type: 'object',
 										properties: {
@@ -274,7 +276,7 @@ export class RewardsController {
 								},
 							},
 						},
-						currentUserPosition: { type: 'number', nullable: true },
+						currentUserPosition: { type: 'number', nullable: true, description: 'Requester\'s actual rank (1-based); null if not in rankings' },
 						metadata: {
 							type: 'object',
 							properties: {

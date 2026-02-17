@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsArray, IsDateString, IsNumber } from 'class-validator';
+import { IsOptional, IsArray, IsDateString, IsNumber, IsBoolean } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class MonthlyMetricsQueryDto {
@@ -54,5 +54,16 @@ export class MonthlyMetricsQueryDto {
 	@IsNumber()
 	@Type(() => Number)
 	branchId?: number;
+
+	@ApiProperty({
+		description: 'Include full checkIns array per user. Default true. Set false for summary-only (smaller payload, faster).',
+		example: true,
+		required: false,
+		default: true,
+	})
+	@IsOptional()
+	@IsBoolean()
+	@Type(() => Boolean)
+	includeCheckIns?: boolean;
 }
 

@@ -74,6 +74,7 @@ export class AttendanceService {
 	/** TTL in ms for overtime analytics cache (short to reflect new check-outs). */
 	private readonly OVERTIME_ANALYTICS_CACHE_TTL_MS: number;
 	private static readonly OVERTIME_CACHE_KEY_MAX_LENGTH = 400;
+	private static readonly MONTHLY_METRICS_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
 
 	// Validation constants for external machine consolidations
 	private readonly MIN_SHIFT_DURATION_MINUTES = 30; // Minimum 30 minutes between check-in and check-out
@@ -152,6 +153,22 @@ export class AttendanceService {
 			const hash = createHash('sha256').update(rawKey).digest('hex');
 			return this.getCacheKey(`overtime:${hash}`);
 		}
+		return this.getCacheKey(rawKey);
+	}
+
+	/**
+	 * Build cache key for monthly metrics response (year, month, org, branch, includeCheckIns, excludeDates).
+	 */
+	private getMonthlyMetricsCacheKey(
+		year: number,
+		month: number,
+		orgId: string,
+		effectiveBranchId: number | undefined,
+		includeCheckIns: boolean,
+		excludeOvertimeDates?: string[],
+	): string {
+		const excludePart = (excludeOvertimeDates ?? []).slice().sort().join(',');
+		const rawKey = `monthly:${year}:${month}:${orgId}:${effectiveBranchId ?? 'all'}:${includeCheckIns}:${excludePart}`;
 		return this.getCacheKey(rawKey);
 	}
 
@@ -5094,6 +5111,7 @@ export class AttendanceService {
 	 * @param orgId - Organization ID to filter by
 	 * @param branchId - Branch ID to filter by
 	 * @param userAccessLevel - User's access level for branch filtering
+	 * @param includeCheckIns - Include full checkIns per user (default true). False for summary-only, smaller payload.
 	 * @returns Monthly metrics for all users with summary and per-user breakdown
 	 */
 	public async getMonthlyMetricsForAllUsers(
@@ -5103,6 +5121,7 @@ export class AttendanceService {
 		orgId?: string,
 		branchId?: number,
 		userAccessLevel?: string,
+		includeCheckIns = true,
 	): Promise<{
 		message: string;
 		data: {
@@ -5156,6 +5175,20 @@ export class AttendanceService {
 				throw new BadRequestException('Organization ID is required');
 			}
 
+			// Response cache: repeated requests for same month/org return instantly
+			const monthlyCacheKey = this.getMonthlyMetricsCacheKey(
+				targetYear,
+				targetMonth,
+				orgId,
+				effectiveBranchId ?? undefined,
+				includeCheckIns,
+				excludeOvertimeDates,
+			);
+			const cachedResponse = await this.cacheManager.get(monthlyCacheKey);
+			if (cachedResponse != null) {
+				return cachedResponse as Awaited<ReturnType<AttendanceService['getMonthlyMetricsForAllUsers']>>;
+			}
+
 			const userWhereConditionsList: any[] = [
 				{ isDeleted: false, organisation: { clerkOrgId: orgId } },
 				{ isDeleted: false, organisation: { ref: orgId } },
@@ -5192,6 +5225,44 @@ export class AttendanceService {
 						userMetrics: [],
 					},
 				};
+			}
+
+			// Batch fetch all attendance for the month for these users (one query instead of N)
+			const userIds = users.map((u) => u.uid);
+			const attendanceWhereConditions: any = {
+				owner: { uid: In(userIds) },
+				checkIn: Between(monthStart, monthEnd),
+			};
+			if (orgId) {
+				attendanceWhereConditions.organisation = [
+					{ clerkOrgId: orgId },
+					{ ref: orgId },
+				];
+			}
+			if (effectiveBranchId) {
+				attendanceWhereConditions.branch = { uid: effectiveBranchId };
+			}
+			const allAttendanceRecords = await this.attendanceRepository.find({
+				where: attendanceWhereConditions,
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'organisation',
+					'branch',
+					'dailyReport',
+				],
+				order: { checkIn: 'ASC' },
+			});
+			// Group by owner.uid for lookup per user
+			const attendanceByUser = new Map<number, Attendance[]>();
+			for (const record of allAttendanceRecords) {
+				const ownerUid = record.owner?.uid;
+				if (ownerUid != null) {
+					const list = attendanceByUser.get(ownerUid) ?? [];
+					list.push(record);
+					attendanceByUser.set(ownerUid, list);
+				}
 			}
 
 			// Enhanced helper function to calculate regular hours (capped at organization work hours)
@@ -5251,7 +5322,42 @@ export class AttendanceService {
 				return totalRegularHours;
 			};
 
-			// Process each user
+			// Process users in parallel with concurrency limit (chunked Promise.all)
+			const CONCURRENCY = 15;
+			const processUser = async (user: typeof users[0]): Promise<{
+				userId: number;
+				userName: string;
+				totalShifts: number;
+				totalHours: number;
+				overtimeHours: number;
+				checkIns: Attendance[];
+			} | null> => {
+				try {
+					const attendanceRecords = attendanceByUser.get(user.uid) ?? [];
+					const totalShifts = attendanceRecords.length;
+					const totalHours = await calculateRegularHours(attendanceRecords, orgId);
+					const overtimeAnalytics = await this.calculateOvertimeAnalytics(
+						attendanceRecords,
+						orgId,
+						excludeOvertimeDates || [],
+					);
+					const overtimeHours = overtimeAnalytics.totalOvertimeHours;
+					const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+					const userName = fullName || user.username || 'Unknown User';
+					return {
+						userId: user.uid,
+						userName,
+						totalShifts,
+						totalHours: Math.round(totalHours * 10) / 10,
+						overtimeHours: Math.round(overtimeHours * 10) / 10,
+						checkIns: includeCheckIns ? attendanceRecords : [],
+					};
+				} catch (error) {
+					this.logger.warn(`Error processing metrics for user ${user.uid}: ${error.message}`);
+					return null;
+				}
+			};
+
 			const userMetrics: Array<{
 				userId: number;
 				userName: string;
@@ -5260,69 +5366,11 @@ export class AttendanceService {
 				overtimeHours: number;
 				checkIns: Attendance[];
 			}> = [];
-
-			for (const user of users) {
-				try {
-					// Build attendance query filters
-					const attendanceWhereConditions: any = {
-						owner: { uid: user.uid },
-						checkIn: Between(monthStart, monthEnd),
-					};
-
-					// Apply organization filter
-					if (orgId) {
-						attendanceWhereConditions.organisation = [
-							{ clerkOrgId: orgId },
-							{ ref: orgId }
-						];
-					}
-
-					// Query attendance records for this user in the month
-					const attendanceRecords = await this.attendanceRepository.find({
-						where: attendanceWhereConditions,
-						relations: [
-							'owner',
-							'owner.branch',
-							'owner.organisation',
-							'organisation',
-							'branch',
-							'dailyReport',
-						],
-						order: {
-							checkIn: 'ASC',
-						},
-					});
-
-					// Calculate metrics for this user
-					const totalShifts = attendanceRecords.length;
-					const totalHours = await calculateRegularHours(attendanceRecords, orgId);
-
-					// Calculate overtime using modified method with excluded dates
-					const overtimeAnalytics = await this.calculateOvertimeAnalytics(
-						attendanceRecords,
-						orgId,
-						excludeOvertimeDates || [],
-					);
-					const overtimeHours = overtimeAnalytics.totalOvertimeHours;
-
-					// Construct user name
-					const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
-					const userName = fullName || user.username || 'Unknown User';
-
-					userMetrics.push({
-						userId: user.uid,
-						userName,
-						totalShifts,
-						totalHours: Math.round(totalHours * 10) / 10,
-						overtimeHours: Math.round(overtimeHours * 10) / 10,
-						checkIns: attendanceRecords,
-					});
-				} catch (error) {
-					this.logger.warn(
-						`Error processing metrics for user ${user.uid}: ${error.message}`,
-					);
-					// Continue with next user
-					continue;
+			for (let i = 0; i < users.length; i += CONCURRENCY) {
+				const chunk = users.slice(i, i + CONCURRENCY);
+				const results = await Promise.all(chunk.map(processUser));
+				for (const r of results) {
+					if (r) userMetrics.push(r);
 				}
 			}
 
@@ -5355,6 +5403,10 @@ export class AttendanceService {
 
 			// Apply timezone conversion to attendance records
 			const responseWithTimezone = await ensureTimezoneConversion(response, orgId, (id) => this.organizationHoursService.getOrganizationTimezone(id));
+
+			// Cache response for repeated requests (same month/org)
+			await this.cacheManager.set(monthlyCacheKey, responseWithTimezone, AttendanceService.MONTHLY_METRICS_CACHE_TTL_MS);
+
 			return responseWithTimezone;
 		} catch (error) {
 			this.logger.error(`Error retrieving monthly metrics for all users: ${error.message}`, error.stack);

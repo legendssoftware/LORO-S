@@ -29,6 +29,8 @@ import { In, Repository, LessThanOrEqual, Not, QueryFailedError } from 'typeorm'
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { format, addDays, addMonths, startOfMonth } from 'date-fns';
 import { User } from './entities/user.entity';
+import { UserProfile } from './entities/user.profile.entity';
+import { UserEmployeementProfile } from './entities/user.employeement.profile.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -103,6 +105,10 @@ export class UserService {
 		@InjectRepository(Device)
 		private deviceRepository: Repository<Device>,
 		private readonly clerkService: ClerkService,
+		@InjectRepository(UserProfile)
+		private userProfileRepository: Repository<UserProfile>,
+		@InjectRepository(UserEmployeementProfile)
+		private userEmployeementProfileRepository: Repository<UserEmployeementProfile>,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 		this.TARGET_CACHE_TTL = this.configService.get<number>('TARGET_CACHE_EXPIRATION_TIME') || 60; // 60 seconds for targets
@@ -116,6 +122,31 @@ export class UserService {
 	 */
 	private getCacheKey(key: string | number): string {
 		return `${this.CACHE_PREFIX}${key}`;
+	}
+
+	/**
+	 * Resolve ref (numeric uid or Clerk user ID string) to numeric uid.
+	 * @param ref - User uid (number or numeric string) or Clerk user ID (e.g. user_2xxx)
+	 * @returns Numeric uid
+	 * @throws NotFoundException if user not found
+	 */
+	private async resolveRefToUid(ref: string | number): Promise<number> {
+		if (typeof ref === 'number' && !Number.isNaN(ref)) {
+			return ref;
+		}
+		const str = String(ref);
+		const numeric = parseInt(str, 10);
+		if (!Number.isNaN(numeric) && String(numeric) === str) {
+			return numeric;
+		}
+		const user = await this.userRepository.findOne({
+			where: { clerkUserId: str, isDeleted: false },
+			select: ['uid'],
+		});
+		if (!user) {
+			throw new NotFoundException(process.env.NOT_FOUND_MESSAGE ?? 'User not found');
+		}
+		return user.uid;
 	}
 
 	/**
@@ -1545,7 +1576,8 @@ export class UserService {
 		);
 
 		try {
-			const cacheKey = this.getCacheKey(searchParameter);
+			const resolvedUid = await this.resolveRefToUid(searchParameter);
+			const cacheKey = this.getCacheKey(resolvedUid);
 			const cachedUser = await this.cacheManager.get<User>(cacheKey);
 
 			if (cachedUser) {
@@ -1575,9 +1607,9 @@ export class UserService {
 			}
 
 
-			// Build where conditions (user ref as string or number; ORM/DB coercion)
+			// Build where conditions using resolved numeric uid
 			const whereConditions: any = {
-				uid: searchParameter,
+				uid: resolvedUid,
 				isDeleted: false,
 			};
 
@@ -1979,21 +2011,22 @@ export class UserService {
 	/**
 	 * Update user information with optional organization and branch scoping
 	 * Includes password hashing and comprehensive cache invalidation
-	 * @param ref - User ID to update
+	 * @param ref - User uid (number or numeric string) or Clerk user ID
 	 * @param updateUserDto - Updated user data
 	 * @param orgId - Optional organization ID for scoping
 	 * @param branchId - Optional branch ID for scoping
-	 * @returns Success message or error details
+	 * @returns Success message and updated user
 	 */
 	async update(
-		ref: number,
+		ref: string | number,
 		updateUserDto: UpdateUserDto,
 		orgId?: number,
 		branchId?: number,
-	): Promise<{ message: string }> {
+	): Promise<{ message: string; user: User }> {
 		const startTime = Date.now();
+		const resolvedUid = await this.resolveRefToUid(ref);
 		this.logger.log(
-			`[USER_UPDATE] Starting user update process for user ID: ${ref} ${orgId ? `in org: ${orgId}` : ''} ${
+			`[USER_UPDATE] Starting user update process for user ID: ${resolvedUid} (ref: ${ref}) ${orgId ? `in org: ${orgId}` : ''} ${
 				branchId ? `in branch: ${branchId}` : ''
 			}`,
 		);
@@ -2003,7 +2036,7 @@ export class UserService {
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.branch', 'branch')
 				.leftJoinAndSelect('user.organisation', 'organisation')
-				.where('user.uid = :ref', { ref })
+				.where('user.uid = :ref', { ref: resolvedUid })
 				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
 				.getOne();
 
@@ -2087,14 +2120,36 @@ export class UserService {
 				}
 			}
 
+			// Build flat User-only payload (TypeORM update only writes to users table columns)
+			const flatPayload: Partial<User> = {};
+			const userColumns = [
+				'name', 'surname', 'email', 'phone', 'photoURL', 'avatar', 'role', 'status',
+				'businesscardURL', 'departmentId', 'accessLevel', 'organisationRef', 'userref', 'hrID',
+				'managedBranches', 'managedStaff', 'assignedClientIds', 'linkedClientUid', 'managedDoors',
+				'username', 'expoPushToken', 'deviceId', 'platform', 'pushTokenUpdatedAt', 'preferences',
+			] as const;
+			// Enum columns: do not write empty string (PostgreSQL enum rejects "")
+			const enumColumns = new Set(['role', 'status', 'accessLevel']);
+			for (const key of userColumns) {
+				const value = updateUserDto[key];
+				if (value === undefined) continue;
+				if (enumColumns.has(key) && value === '') continue;
+				(flatPayload as Record<string, unknown>)[key] = value;
+			}
+			if (updateUserDto.branch?.uid != null) {
+				flatPayload.branchUid = updateUserDto.branch.uid;
+			}
+
 			// Passwords are managed by Clerk only — never stored or updated via DB
-			await this.userRepository.update({ uid: ref }, updateUserDto);
+			await this.userRepository.update({ uid: resolvedUid }, flatPayload);
 
 			const updatedUser = await this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.branch', 'branch')
 				.leftJoinAndSelect('user.organisation', 'organisation')
-				.where('user.uid = :ref', { ref })
+				.leftJoinAndSelect('user.userProfile', 'userProfile')
+				.leftJoinAndSelect('user.userEmployeementProfile', 'userEmployeementProfile')
+				.where('user.uid = :ref', { ref: resolvedUid })
 				.getOne();
 
 			if (!updatedUser) {
@@ -2102,6 +2157,52 @@ export class UserService {
 			}
 
 			this.logger.log(`[USER_UPDATE] User updated successfully: ${updatedUser.uid} (${updatedUser.email})`);
+
+			// Persist profile (user_profile table) when present in DTO
+			if (updateUserDto.profile && Object.keys(updateUserDto.profile).length > 0 && updatedUser.clerkUserId) {
+				let userProfile = await this.userProfileRepository.findOne({
+					where: { ownerClerkUserId: updatedUser.clerkUserId },
+				});
+				if (!userProfile) {
+					userProfile = this.userProfileRepository.create({ ownerClerkUserId: updatedUser.clerkUserId });
+				}
+				const p = updateUserDto.profile;
+				if (p.height !== undefined) userProfile.height = p.height;
+				if (p.weight !== undefined) userProfile.weight = p.weight;
+				if (p.hairColor !== undefined) userProfile.hairColor = p.hairColor;
+				if (p.eyeColor !== undefined) userProfile.eyeColor = p.eyeColor;
+				if (p.gender !== undefined) userProfile.gender = p.gender;
+				if (p.dateOfBirth !== undefined) userProfile.dateOfBirth = p.dateOfBirth instanceof Date ? p.dateOfBirth : new Date(p.dateOfBirth);
+				if (p.address !== undefined) userProfile.address = p.address;
+				if (p.city !== undefined) userProfile.city = p.city;
+				if (p.country !== undefined) userProfile.country = p.country;
+				if (p.zipCode !== undefined) userProfile.zipCode = p.zipCode;
+				if (p.aboutMe !== undefined) userProfile.aboutMe = p.aboutMe;
+				if (p.socialMedia !== undefined) userProfile.socialMedia = p.socialMedia;
+				if (p.maritalStatus !== undefined) userProfile.maritalStatus = p.maritalStatus;
+				if (p.numberDependents !== undefined) userProfile.numberDependents = p.numberDependents;
+				await this.userProfileRepository.save(userProfile);
+			}
+
+			// Persist employment profile (user_employeement_profile table) when present in DTO
+			if (updateUserDto.employmentProfile && Object.keys(updateUserDto.employmentProfile).length > 0 && updatedUser.clerkUserId) {
+				let empProfile = await this.userEmployeementProfileRepository.findOne({
+					where: { ownerClerkUserId: updatedUser.clerkUserId },
+				});
+				if (!empProfile) {
+					empProfile = this.userEmployeementProfileRepository.create({ ownerClerkUserId: updatedUser.clerkUserId });
+				}
+				const e = updateUserDto.employmentProfile;
+				if (e.branchref !== undefined) empProfile.branchref = e.branchref;
+				if (e.position !== undefined) empProfile.position = e.position;
+				if (e.department !== undefined) empProfile.department = e.department;
+				if (e.startDate !== undefined) empProfile.startDate = e.startDate instanceof Date ? e.startDate : new Date(e.startDate);
+				if (e.endDate !== undefined) empProfile.endDate = e.endDate instanceof Date ? e.endDate : new Date(e.endDate);
+				if (e.isCurrentlyEmployed !== undefined) empProfile.isCurrentlyEmployed = e.isCurrentlyEmployed;
+				if (e.email !== undefined) empProfile.email = e.email;
+				if (e.contactNumber !== undefined) empProfile.contactNumber = e.contactNumber;
+				await this.userEmployeementProfileRepository.save(empProfile);
+			}
 
 			// Sync profile changes to Clerk after successful database update
 			if (existingUser.clerkUserId) {
@@ -2268,8 +2369,10 @@ export class UserService {
 				`[USER_UPDATE] User update completed successfully in ${executionTime}ms for user: ${updatedUser.email}`,
 			);
 
+			const userForResponse = await this.excludePasswordAndPopulateClients(updatedUser);
 			return {
 				message: process.env.SUCCESS_MESSAGE,
+				user: userForResponse as User,
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
@@ -2277,10 +2380,7 @@ export class UserService {
 				`[USER_UPDATE] Failed to update user ID: ${ref} after ${executionTime}ms. Error: ${error.message}`,
 				error.stack,
 			);
-
-			return {
-				message: error?.message,
-			};
+			throw error;
 		}
 	}
 

@@ -3460,6 +3460,7 @@ Retrieves detailed attendance analytics for a specific user including historical
 			orgId,
 			queryDto.branchId,
 			userAccessLevel,
+			queryDto.includeCheckIns !== false,
 		);
 	}
 

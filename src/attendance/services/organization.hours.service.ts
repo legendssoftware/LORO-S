@@ -16,11 +16,21 @@ export interface WorkingDayInfo {
 	expectedWorkMinutes: number;
 }
 
+/** Per-date cache entry with TTL for getWorkingDayInfo. */
+interface WorkingDayCacheEntry {
+	value: WorkingDayInfo;
+	expiresAt: number;
+}
+
 @Injectable()
 export class OrganizationHoursService {
 	private readonly logger = new Logger(OrganizationHoursService.name);
 	private hoursCache = new Map<string, OrganisationHours>();
 	private cacheExpiry = 30 * 60 * 1000; // 30 minutes
+	/** Per (orgId, date) cache for getWorkingDayInfo - reduces repeated work in monthly metrics. */
+	private workingDayInfoCache = new Map<string, WorkingDayCacheEntry>();
+	private readonly workingDayCacheTtlMs = 5 * 60 * 1000; // 5 minutes
+	private readonly workingDayCacheMaxSize = 500;
 
 	constructor(
 		@InjectRepository(OrganisationHours)
@@ -96,15 +106,15 @@ export class OrganizationHoursService {
 	/**
 	 * Get working day information for a specific date
 	 * Accepts string (Clerk org ID) or number (organisation uid) for backward compatibility
+	 * Cached by (orgId, date) to avoid repeated computation in monthly metrics.
 	 */
 	async getWorkingDayInfo(organizationId: string | number, date: Date): Promise<WorkingDayInfo> {
 		// Convert to string if number (resolve uid to clerkOrgId/ref)
-		const orgIdString = typeof organizationId === 'number' 
+		const orgIdString = typeof organizationId === 'number'
 			? await this.resolveUidToOrgIdString(organizationId)
 			: organizationId;
-		
+
 		if (!orgIdString) {
-			// Return default if org not found
 			return {
 				isWorkingDay: true,
 				startTime: TimeCalculatorUtil.DEFAULT_WORK.START_TIME,
@@ -112,6 +122,35 @@ export class OrganizationHoursService {
 				expectedWorkMinutes: TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES,
 			};
 		}
+
+		const dateString = date.toISOString().split('T')[0];
+		const cacheKey = `${orgIdString}:${dateString}`;
+		const now = Date.now();
+
+		// Check per-date cache (avoids thousands of redundant calls in monthly metrics)
+		const cached = this.workingDayInfoCache.get(cacheKey);
+		if (cached && cached.expiresAt > now) {
+			return cached.value;
+		}
+		if (cached) {
+			this.workingDayInfoCache.delete(cacheKey);
+		}
+		if (this.workingDayInfoCache.size >= this.workingDayCacheMaxSize) {
+			this.workingDayInfoCache.clear();
+		}
+
+		const result = await this.computeWorkingDayInfo(orgIdString, date);
+		this.workingDayInfoCache.set(cacheKey, {
+			value: result,
+			expiresAt: now + this.workingDayCacheTtlMs,
+		});
+		return result;
+	}
+
+	/**
+	 * Compute working day info (no cache). Used internally by getWorkingDayInfo.
+	 */
+	private async computeWorkingDayInfo(orgIdString: string, date: Date): Promise<WorkingDayInfo> {
 		const orgHours = await this.getOrganizationHours(orgIdString);
 		const dayOfWeek = TimeCalculatorUtil.getDayOfWeek(date);
 
@@ -124,14 +163,12 @@ export class OrganizationHoursService {
 			};
 		}
 
-		// Check for special hours first
 		const dateString = date.toISOString().split('T')[0];
 		const specialHour = orgHours.specialHours?.find((sh) => sh.date === dateString);
 
 		if (specialHour) {
 			const startMinutes = TimeCalculatorUtil.timeToMinutes(specialHour.openTime);
 			const endMinutes = TimeCalculatorUtil.timeToMinutes(specialHour.closeTime);
-
 			return {
 				isWorkingDay: true,
 				startTime: specialHour.openTime,
@@ -140,7 +177,6 @@ export class OrganizationHoursService {
 			};
 		}
 
-		// Check regular schedule
 		const weeklySchedule = orgHours.weeklySchedule;
 		const isWorkingDay = weeklySchedule[dayOfWeek.toLowerCase() as keyof typeof weeklySchedule];
 
@@ -153,7 +189,6 @@ export class OrganizationHoursService {
 			};
 		}
 
-		// Check if per-day schedule exists and has times for this day
 		const daySchedule = orgHours.schedule?.[dayOfWeek.toLowerCase() as keyof typeof orgHours.schedule];
 		if (daySchedule && !daySchedule.closed && daySchedule.start && daySchedule.end) {
 			const startMinutes = TimeCalculatorUtil.timeToMinutes(daySchedule.start);
@@ -166,15 +201,13 @@ export class OrganizationHoursService {
 			};
 		}
 
-		// Fall back to global openTime/closeTime
-		// Convert Date objects to HH:mm strings
-		const openTimeStr = orgHours.openTime instanceof Date 
-			? format(orgHours.openTime, 'HH:mm:ss') 
+		const openTimeStr = orgHours.openTime instanceof Date
+			? format(orgHours.openTime, 'HH:mm:ss')
 			: String(orgHours.openTime);
-		const closeTimeStr = orgHours.closeTime instanceof Date 
-			? format(orgHours.closeTime, 'HH:mm:ss') 
+		const closeTimeStr = orgHours.closeTime instanceof Date
+			? format(orgHours.closeTime, 'HH:mm:ss')
 			: String(orgHours.closeTime);
-		
+
 		const startMinutes = TimeCalculatorUtil.timeToMinutes(openTimeStr);
 		const endMinutes = TimeCalculatorUtil.timeToMinutes(closeTimeStr);
 
