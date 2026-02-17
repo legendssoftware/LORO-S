@@ -1244,6 +1244,12 @@ export class AttendanceController {
 	}
 
 	@Get('date/:date')
+	@isPublic()
+	@ApiHeader({
+		name: 'x-org-id',
+		required: false,
+		description: 'Organization ID (Clerk org ID or ref). For public access without token, send this header or orgId query. With token, org is taken from token.',
+	})
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -1256,7 +1262,7 @@ export class AttendanceController {
 	)
 	@ApiOperation({
 		summary: 'Get attendance records by date',
-		description: 'Attendance records for a single date (YYYY-MM-DD). Org from auth. Returns checkIns and optional analytics.',
+		description: 'Attendance records for a single date (YYYY-MM-DD). Public: no token required when x-org-id header or orgId query is sent. With token, org from token. Returns checkIns and optional analytics.',
 	})
 	@ApiParam({
 		name: 'date',
@@ -1286,6 +1292,11 @@ export class AttendanceController {
 				value: '2024-03-02',
 			},
 		},
+	})
+	@ApiQuery({
+		name: 'orgId',
+		required: false,
+		description: 'Organization ID (Clerk org ID or ref). For public access without token, send x-org-id header or this query.',
 	})
 	@ApiOkResponse({
 		description: '✅ Date-filtered attendance records retrieved successfully',
@@ -1430,10 +1441,7 @@ export class AttendanceController {
 		},
 	})
 	checkInsByDate(@Param('date') date: string, @Req() req: AuthenticatedRequest) {
-		const orgId = getClerkOrgId(req);
-		if (!orgId) {
-			throw new BadRequestException('Organization context required');
-		}
+		const orgId = this.resolveOrgId(req, undefined, req.query['orgId'] as string | number | undefined);
 		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userAccessLevel = req.user?.accessLevel;
 		return this.attendanceService.checkInsByDate(date, orgId, branchId, userAccessLevel);
