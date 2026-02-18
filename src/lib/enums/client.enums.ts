@@ -112,3 +112,27 @@ export enum CommunicationType {
     WHATSAPP = 'whatsapp',
     SMS = 'sms'
 }
+
+export enum MethodOfContact {
+    IN_PERSON = 'in-person',
+    VIDEO_CALL = 'video-call',
+    PHONE_CALL = 'phone-call',
+    EMAIL = 'email',
+    WHATSAPP = 'whatsapp',
+    SMS = 'sms'
+}
+
+export enum BuildingType {
+    OFFICE = 'office',
+    HOME = 'home',
+    SHOP = 'shop',
+    GARAGE = 'garage',
+    FACTORY = 'factory',
+    OTHER_BUSINESS = 'other-business',
+    OTHER = 'other'
+}
+
+export enum ContactMade {
+    YES = 'yes',
+    NO = 'no'
+}

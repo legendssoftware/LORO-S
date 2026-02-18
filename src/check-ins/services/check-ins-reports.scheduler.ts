@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { Organisation } from '../../organisation/entities/organisation.entity';
 import { OrganisationHours } from '../../organisation/entities/organisation-hours.entity';
 import { CheckInsReportsService } from './check-ins-reports.service';
+import { CheckInsService } from '../check-ins.service';
 import { format, addMinutes, parse, startOfDay, endOfDay } from 'date-fns';
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 
@@ -18,6 +19,7 @@ export class CheckInsReportsScheduler {
 		@InjectRepository(OrganisationHours)
 		private organisationHoursRepository: Repository<OrganisationHours>,
 		private checkInsReportsService: CheckInsReportsService,
+		private checkInsService: CheckInsService,
 	) {}
 
 	/**
@@ -69,6 +71,21 @@ export class CheckInsReportsScheduler {
 			await this.checkInsReportsService.sendLongVisitAlerts();
 		} catch (error) {
 			this.logger.error(`Long-visit alerts scheduler error: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * Run every 15 minutes to auto-end visits that were never checked out after 6 hours.
+	 */
+	@Cron('0 */15 * * * *')
+	async checkAndAutoEndStaleVisits(): Promise<void> {
+		try {
+			const { ended } = await this.checkInsService.autoEndStaleVisits(6);
+			if (ended > 0) {
+				this.logger.log(`Auto-ended ${ended} stale visit(s)`);
+			}
+		} catch (error) {
+			this.logger.error(`Auto-end stale visits scheduler error: ${error.message}`, error.stack);
 		}
 	}
 

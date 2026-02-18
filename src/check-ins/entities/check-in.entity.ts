@@ -8,6 +8,9 @@ import { Quotation } from '../../shop/entities/quotation.entity';
 import { Lead } from '../../leads/entities/lead.entity';
 import { OrderStatus } from '../../lib/enums/status.enums';
 import { Industry } from '../../lib/enums/lead.enums';
+import { MethodOfContact } from 'src/lib/enums/client.enums';
+import { BuildingType } from 'src/lib/enums/client.enums';
+import { ContactMade } from 'src/lib/enums/client.enums';
 
 @Entity('check-ins')
 export class CheckIn {
@@ -143,12 +146,12 @@ export class CheckIn {
 	leadUid: number;
 
 	// New check-in enhancement fields
-	@Column({ type: 'varchar', nullable: true })
-	methodOfContact: string;
+	@Column({ type: 'enum', enum: MethodOfContact, nullable: true, default: MethodOfContact.IN_PERSON })
+	methodOfContact: MethodOfContact;
 
-	@Column({ type: 'varchar', nullable: true })
-	buildingType: string;
+	@Column({ type: 'enum', enum: BuildingType, nullable: true, default: BuildingType.OFFICE })
+	buildingType: BuildingType;
 
-	@Column({ type: 'boolean', default: false })
-	contactMade: boolean;
+	@Column({ type: 'enum', enum: ContactMade, nullable: true, default: ContactMade.YES })
+	contactMade: ContactMade;
 }

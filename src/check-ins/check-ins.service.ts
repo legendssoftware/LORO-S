@@ -1,11 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException, Logger, Inject, ForbiddenException } from '@nestjs/common';
 import { CreateCheckInDto } from './dto/create-check-in.dto';
-import { Repository } from 'typeorm';
+import { Repository, IsNull, LessThan } from 'typeorm';
 import { CheckIn } from './entities/check-in.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateCheckOutDto } from './dto/create-check-out.dto';
 import { UpdateVisitDetailsDto } from './dto/update-visit-details.dto';
-import { differenceInMinutes, differenceInHours, format } from 'date-fns';
+import { differenceInMinutes, differenceInHours, format, addHours } from 'date-fns';
 import { RewardsService } from '../rewards/rewards.service';
 import { XP_VALUES_TYPES } from '../lib/constants/constants';
 import { XP_VALUES } from '../lib/constants/constants';
@@ -1246,6 +1246,53 @@ export class CheckInsService {
 
 			return response;
 		}
+	}
+
+	/**
+	 * Find check-ins that were never ended (no check-out) and automatically end them
+	 * after the given cutoff hours. Used by scheduler to close stale visits.
+	 */
+	async autoEndStaleVisits(cutoffHours = 6): Promise<{ ended: number }> {
+		const operationId = `autoEndStale_${Date.now()}`;
+		const cutoff = addHours(new Date(), -cutoffHours);
+		const stale = await this.checkInRepository.find({
+			where: {
+				checkOutTime: IsNull(),
+				checkInTime: LessThan(cutoff),
+			},
+			order: { checkInTime: 'ASC' },
+		});
+		if (stale.length === 0) {
+			this.logger.debug(`[${operationId}] No stale visits to auto-end`);
+			return { ended: 0 };
+		}
+		this.logger.log(`[${operationId}] Auto-ending ${stale.length} visit(s) older than ${cutoffHours}h`);
+		let ended = 0;
+		for (const checkIn of stale) {
+			try {
+				const checkInTime = new Date(checkIn.checkInTime);
+				const checkOutTime = addHours(checkInTime, cutoffHours);
+				const minutesWorked = differenceInMinutes(checkOutTime, checkInTime);
+				const hoursWorked = differenceInHours(checkOutTime, checkInTime);
+				const remainingMinutes = minutesWorked % 60;
+				const duration = `${hoursWorked}h ${remainingMinutes}m`;
+				const notesSuffix = ' (Auto-ended after 6h)';
+				const existingNotes = checkIn.notes?.trim() ?? '';
+				const notes = existingNotes ? `${existingNotes}${notesSuffix}` : notesSuffix;
+				await this.checkInRepository.update(checkIn.uid, {
+					checkOutTime,
+					checkOutLocation: '-',
+					checkOutPhoto: 'auto-ended',
+					duration,
+					notes,
+				});
+				ended++;
+				this.logger.log(`[${operationId}] Auto-ended check-in ${checkIn.uid} (checkIn ${format(checkInTime, 'yyyy-MM-dd HH:mm')})`);
+			} catch (err) {
+				this.logger.error(`[${operationId}] Failed to auto-end check-in ${checkIn.uid}: ${err?.message}`, err?.stack);
+			}
+		}
+		return { ended };
 	}
 
 	async getAllCheckIns(

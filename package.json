@@ -24,7 +24,9 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "populate:clerk-org": "ts-node -r tsconfig-paths/register src/scripts/populate-clerk-org.ts",
     "populate:clerk-users": "ts-node -r tsconfig-paths/register src/scripts/populate-clerk-users.ts",
-    "sync:csv-to-clerk": "ts-node -r tsconfig-paths/register src/scripts/sync-csv-users-to-clerk.ts"
+    "sync:csv-to-clerk": "ts-node -r tsconfig-paths/register src/scripts/sync-csv-users-to-clerk.ts",
+    "delete-user-and-data": "ts-node -r tsconfig-paths/register src/scripts/delete-user-and-data.ts",
+    "migrate:attendance-from-legacy": "ts-node -r tsconfig-paths/register src/scripts/migrate-attendance-from-legacy.ts"
   },
   "dependencies": {
     "@apollo/server": "^4.11.2",
