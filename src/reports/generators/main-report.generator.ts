@@ -15,6 +15,7 @@ import { Product } from '../../products/entities/product.entity';
 import { CheckIn } from '../../check-ins/entities/check-in.entity';
 import { Doc } from '../../docs/entities/doc.entity';
 import { Notification } from '../../notifications/entities/notification.entity';
+import { Organisation } from '../../organisation/entities/organisation.entity';
 import { ReportParamsDto } from '../dto/report-params.dto';
 import { TimezoneUtil } from '../../lib/utils/timezone.util';
 import { OrganizationHoursService } from '../../attendance/services/organization.hours.service';
@@ -24,6 +25,8 @@ export class MainReportGenerator {
 	private readonly logger = new Logger(MainReportGenerator.name);
 
 	constructor(
+		@InjectRepository(Organisation)
+		private organisationRepository: Repository<Organisation>,
 		@InjectRepository(User)
 		private userRepository: Repository<User>,
 		@InjectRepository(Attendance)
@@ -86,6 +89,16 @@ export class MainReportGenerator {
 	async generate(params: ReportParamsDto): Promise<Record<string, any>> {
 		const { organisationId, branchId, dateRange } = params;
 
+		// Resolve organisation clerkOrgId for check-ins (check-ins table uses organisationUid = Clerk org ID string, not organisation.uid)
+		let clerkOrgId: string | null = null;
+		if (organisationId) {
+			const org = await this.organisationRepository.findOne({
+				where: { uid: organisationId },
+				select: ['clerkOrgId', 'ref'],
+			});
+			clerkOrgId = org?.clerkOrgId ?? org?.ref ?? null;
+		}
+
 		// Create base filters
 		const orgFilter = { organisation: { uid: organisationId } };
 		const branchFilter = branchId ? { branch: { uid: branchId } } : {};
@@ -97,6 +110,9 @@ export class MainReportGenerator {
 				createdAt: Between(new Date(dateRange.start), new Date(dateRange.end)),
 			};
 		}
+
+		// Check-ins filter: use organisationUid (Clerk org ID) - column is organisationUid, not organisationId
+		const checkInOrgFilter = clerkOrgId ? { organisationUid: clerkOrgId } : {};
 
 		// Fetch all data in parallel for better performance
 		const [
@@ -166,7 +182,7 @@ export class MainReportGenerator {
 			}),
 
 			this.checkInRepository.find({
-				where: [{ ...orgFilter, ...branchFilter, ...dateFilter }],
+				where: [{ ...checkInOrgFilter, ...branchFilter, ...dateFilter }],
 			}),
 
 			this.docRepository.find({

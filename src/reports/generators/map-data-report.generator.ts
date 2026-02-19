@@ -317,10 +317,10 @@ export class MapDataReportGenerator {
 					order: { createdAt: 'DESC' },
 					take: 200,
 				}),
-				// CheckIns
+				// CheckIns (table column is organisationUid = Clerk org ID string, not organisationId)
 				this.checkInRepository.find({
 					where: {
-						organisation: { uid: organisationId },
+						organisationUid: organisation.clerkOrgId,
 						...(branchId ? { branch: { uid: branchId } } : {}),
 					},
 					relations: ['owner', 'client', 'branch', 'organisation'],
@@ -1471,16 +1471,14 @@ export class MapDataReportGenerator {
 
 		try {
 			this.logger.debug('Fetching recent check-ins for events');
-			// Recent check-ins - Note: CheckIn entity has limited fields, using client location
+			// Recent check-ins - use organisationUid (Clerk org ID); CheckIn table has organisationUid, not organisationId
 			const recentCheckIns = await this.checkInRepository.find({
 				where: {
-					organisation: { uid: organisationId },
+					organisationUid: organisationClerkOrgId,
 					...(branchId ? { branch: { uid: branchId } } : {}),
-					// Note: CheckIn doesn't have createdAt field, so we remove date filter
 				},
 				relations: ['owner', 'client'],
 				take: 10,
-				// Note: CheckIn doesn't have createdAt field, so we can't order by it
 			});
 
 			recentCheckIns.forEach((checkIn) => {

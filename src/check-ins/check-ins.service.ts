@@ -22,6 +22,7 @@ import { LeadsService } from '../leads/leads.service';
 import { Quotation } from '../shop/entities/quotation.entity';
 import { CreateLeadDto } from '../leads/dto/create-lead.dto';
 import { LeadSource } from '../lib/enums/lead.enums';
+import { ContactMade } from '../lib/enums/client.enums';
 import { Address } from '../lib/interfaces/address.interface';
 import { DomainReportResponseDto } from '../lib/dto/domain-report.dto';
 
@@ -426,7 +427,7 @@ export class CheckInsService {
 				// New check-in enhancement fields
 				methodOfContact: createCheckInDto.methodOfContact,
 				buildingType: createCheckInDto.buildingType,
-				contactMade: createCheckInDto.contactMade ?? false,
+				contactMade: createCheckInDto.contactMade === false ? ContactMade.NO : ContactMade.YES,
 				// No branch - visits use org and user only
 				branch: null,
 				branchUid: null,
@@ -993,7 +994,7 @@ export class CheckInsService {
 				updateData.buildingType = createCheckOutDto.buildingType;
 			}
 			if (createCheckOutDto?.contactMade !== undefined) {
-				updateData.contactMade = createCheckOutDto.contactMade;
+				updateData.contactMade = createCheckOutDto.contactMade === true ? ContactMade.YES : ContactMade.NO;
 			}
 
 			// Link quotation if provided
@@ -1295,6 +1296,10 @@ export class CheckInsService {
 		return { ended };
 	}
 
+	/**
+	 * Get all check-ins for the organisation (or for a specific user when userUid provided).
+	 * When startDate/endDate are omitted, the result set is unbounded and returns all matching check-ins.
+	 */
 	async getAllCheckIns(
 		orgId?: string,
 		clerkUserId?: string,
@@ -1697,7 +1702,7 @@ export class CheckInsService {
 					updateData.buildingType = updateDto.buildingType;
 				}
 				if (updateDto.contactMade !== undefined) {
-					updateData.contactMade = updateDto.contactMade;
+					updateData.contactMade = updateDto.contactMade === true ? ContactMade.YES : ContactMade.NO;
 				}
 				if (updateDto.followUp !== undefined) {
 					updateData.followUp = updateDto.followUp;
