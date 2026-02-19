@@ -1,15 +1,15 @@
-{{#base headerTitle="Overtime Work Reminder" headerSubtitle="You're working beyond scheduled hours"}}
+{{#base headerTitle="Beyond Expected Hours Reminder" headerSubtitle="You're working beyond scheduled hours"}}
 
 <div class="greeting">
     Great dedication, {{employeeName}}! 💪
 </div>
 
 <div class="warning-notice">
-    <p>🕐 <strong>Overtime Notice:</strong> You've worked {{overtimeDuration}} of overtime. Your shift ended at {{organizationCloseTime}}.</p>
+    <p>🕐 You've worked {{overtimeDuration}} beyond your scheduled hours. Your shift ended at {{organizationCloseTime}}.</p>
 </div>
 
 <div class="info-card">
-    <h3>⏱️ Overtime Summary</h3>
+    <h3>⏱️ Time Summary</h3>
     <div class="detail-grid">
         <div class="detail-item">
             <span class="detail-label">Scheduled End</span>
@@ -20,7 +20,7 @@
             <span class="detail-value">{{currentTime}}</span>
         </div>
         <div class="detail-item">
-            <span class="detail-label">Overtime Duration</span>
+            <span class="detail-label">Time beyond schedule</span>
             <span class="detail-value" style="color: #f59e0b; font-weight: 700;">{{overtimeDuration}}</span>
         </div>
     </div>

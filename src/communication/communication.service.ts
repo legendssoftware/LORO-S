@@ -1145,7 +1145,7 @@ export class CommunicationService {
 				};
 			case EmailType.OVERTIME_REMINDER:
 				return {
-					subject: 'Overtime Work Reminder',
+					subject: 'Working Beyond Scheduled Hours – Reminder',
 					body: OvertimeReminder(data as OvertimeReminderData),
 				};
 			case EmailType.CHECK_INS_DAILY_REPORT:

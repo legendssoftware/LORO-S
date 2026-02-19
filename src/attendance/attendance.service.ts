@@ -173,6 +173,42 @@ export class AttendanceService {
 	}
 
 	/**
+	 * Invalidate monthly metrics cache for an org so the next metrics request recalculates.
+	 * Clears keys for current and previous month (branch + all branches, includeCheckIns true/false).
+	 */
+	private async clearMonthlyMetricsCacheForOrg(orgId: string, branchId?: number): Promise<void> {
+		try {
+			const now = new Date();
+			const current = { year: now.getFullYear(), month: now.getMonth() + 1 };
+			const prev = subMonths(now, 1);
+			const previous = { year: prev.getFullYear(), month: prev.getMonth() + 1 };
+			const months = [current, previous];
+			const branchVariants: (number | undefined)[] = [branchId, undefined];
+			const includeCheckInsVariants = [true, false];
+			const emptyExclude: string[] = [];
+
+			for (const { year, month } of months) {
+				for (const effectiveBranchId of branchVariants) {
+					for (const includeCheckIns of includeCheckInsVariants) {
+						const key = this.getMonthlyMetricsCacheKey(
+							year,
+							month,
+							orgId,
+							effectiveBranchId ?? undefined,
+							includeCheckIns,
+							emptyExclude,
+						);
+						await this.cacheManager.del(key);
+						this.logger.debug(`Cleared monthly metrics cache key: ${key}`);
+					}
+				}
+			}
+		} catch (error) {
+			this.logger.error('Error clearing monthly metrics cache:', error?.message);
+		}
+	}
+
+	/**
 	 * Compute duration and overtime for a shift that spans more than one calendar day in org timezone.
 	 * Splits the shift by org calendar day, applies per-day expected work minutes, and sums regular and overtime.
 	 */
@@ -290,6 +326,10 @@ export class AttendanceService {
 			for (const key of keysToDelete) {
 				await this.cacheManager.del(key);
 				this.logger.debug(`Cleared cache key: ${key}`);
+			}
+
+			if (orgId) {
+				await this.clearMonthlyMetricsCacheForOrg(orgId, branchId);
 			}
 
 			this.logger.debug(`Cleared ${keysToDelete.length} attendance cache keys`);
@@ -1572,13 +1612,14 @@ export class AttendanceService {
 			await queryRunner.manager.update(Attendance, activeShift.uid, checkOutUpdatePayload);
 
 			// Prepare response (commit and cache clear handled by runInTransaction / setImmediate)
+			//TODO: Return 0 for overtime in API; actual overtime is still calculated and stored. Revert when overtime may be exposed again.
 			const responseData = {
 				attendanceId: activeShift.uid,
 				userId: ownerUidNum,
 				checkInTime: activeShift.checkIn,
 				checkOutTime: checkOutTime,
 				duration,
-				overtime: overtimeDuration,
+				overtime: '0h 0m',
 				totalWorkMinutes: workSession.netWorkMinutes,
 				totalBreakMinutes: breakMinutes,
 				status: AttendanceStatus.COMPLETED,
@@ -1819,8 +1860,9 @@ export class AttendanceService {
 
 				// Apply timezone conversion to cached results using enhanced method (orgId string for hours lookup)
 				const cachedResultWithTimezone = await ensureTimezoneConversion(cachedResult, orgId ?? undefined, (id) => this.organizationHoursService.getOrganizationTimezone(id));
-
-				return cachedResultWithTimezone;
+				//TODO: Return 0 for overtime in API; actual overtime is still calculated and stored. Revert when overtime may be exposed again.
+				const checkInsMasked = (cachedResultWithTimezone.checkIns ?? []).map((c: Attendance) => ({ ...c, overtime: '0h 0m' }));
+				return { ...cachedResultWithTimezone, checkIns: checkInsMasked };
 			}
 
 			const whereConditions: any = {};
@@ -1875,10 +1917,12 @@ export class AttendanceService {
 
 			this.logger.log(`Successfully retrieved ${checkIns.length} check-in records`);
 
+			//TODO: Return 0 for overtime in API; actual overtime is still calculated and stored. Revert when overtime may be exposed again.
+			const checkInsWithMaskedOvertime = checkIns.map((c) => ({ ...c, overtime: '0h 0m' }));
 			// Apply timezone conversion to all attendance records using enhanced method
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
-				checkIns: checkIns,
+				checkIns: checkInsWithMaskedOvertime,
 			};
 
 			const responseWithTimezone = await ensureTimezoneConversion(response, orgId, (id) => this.organizationHoursService.getOrganizationTimezone(id));
@@ -1983,12 +2027,14 @@ export class AttendanceService {
 			});
 
 			// Combine both sets of check-ins and mark multi-day shifts
+			//TODO: Return 0 for overtime in API; actual overtime is still calculated and stored. Revert when overtime may be exposed again.
 			const allCheckIns = [...checkInsToday, ...ongoingShifts].map((checkIn) => {
 				const checkInDate = new Date(checkIn.checkIn);
 				const isMultiDay = checkInDate < startOfDayConverted;
 
 				return {
 					...checkIn,
+					overtime: '0h 0m',
 					isMultiDayShift: isMultiDay,
 					shiftDaySpan: isMultiDay ? this.calculateShiftDaySpan(checkInDate, endOfDayConverted) : 1,
 				};
@@ -2311,8 +2357,8 @@ export class AttendanceService {
 							case 'overtime':
 								const otHours = Math.floor((overtimeMinutes || 0) / 60);
 								const otMins = (overtimeMinutes || 0) % 60;
-								adminTitle = '🔥 Employee Working Overtime';
-								adminMessage = `${userName} is currently working overtime (${otHours}h ${otMins}m). Please monitor for employee wellness and ensure proper rest periods.`;
+								adminTitle = '🔥 Employee Working Beyond Expected Hours';
+								adminMessage = `${userName} is currently working beyond expected hours (${otHours}h ${otMins}m). Please monitor for employee wellness and ensure proper rest periods.`;
 								break;
 						}
 
@@ -3276,6 +3322,24 @@ export class AttendanceService {
 	}
 
 	/**
+	 * Format shift start Address to a single-line string for display.
+	 * Uses formattedAddress when present; otherwise builds from street, suburb, city, country.
+	 */
+	private formatShiftStartAddress(address: Address | undefined | null): string | null {
+		if (!address) return null;
+		if (address.formattedAddress?.trim()) return address.formattedAddress.trim();
+		const parts = [
+			[address.streetNumber, address.street].filter(Boolean).join(' '),
+			address.suburb,
+			address.city,
+			address.province || address.state,
+			address.country,
+		].filter(Boolean);
+		const line = parts.join(', ').trim();
+		return line || null;
+	}
+
+	/**
 	 * Get daily attendance overview - present and absent users
 	 */
 	public async getDailyAttendanceOverview(
@@ -3308,6 +3372,7 @@ export class AttendanceService {
 				workingHours: string | null;
 				isOnBreak: boolean;
 				shiftDuration: string;
+				shiftStartAddress: string | null;
 			}>;
 			absentUsers: Array<{
 				uid: number;
@@ -3405,6 +3470,9 @@ export class AttendanceService {
 					const user = attendance.owner;
 					const userProfile = user.userProfile || null;
 
+					const startAddress = attendance.placesOfInterest?.startAddress as Address | undefined;
+					const shiftStartAddress = this.formatShiftStartAddress(startAddress);
+
 					presentUsersMap.set(user.uid, {
 						uid: user.uid,
 						name: user.name || '',
@@ -3437,6 +3505,7 @@ export class AttendanceService {
 								(1000 * 60),
 							)}m`
 							: 'In Progress',
+						shiftStartAddress,
 					});
 					presentUserIds.add(user.uid);
 				}
@@ -3627,6 +3696,7 @@ export class AttendanceService {
 				}
 			});
 
+			//TODO: Return 0 for overtime in API; actual overtime is still calculated and stored. Revert when overtime may be exposed again.
 			// Mark all shifts with their day span information
 			const allCheckIns = [...checkInsInRange, ...ongoingShifts].map((checkIn) => {
 				const checkInDate = new Date(checkIn.checkIn);
@@ -3635,6 +3705,7 @@ export class AttendanceService {
 
 				return {
 					...checkIn,
+					overtime: '0h 0m',
 					isMultiDayShift: daySpan > 1,
 					shiftDaySpan: daySpan,
 					isOngoingShift: !checkIn.checkOut && checkIn.status !== AttendanceStatus.COMPLETED,
@@ -3647,6 +3718,7 @@ export class AttendanceService {
 				checkIns: allCheckIns,
 				multiDayShifts: multiDayShifts.map((shift) => ({
 					...shift,
+					overtime: '0h 0m',
 					shiftDaySpan: this.calculateShiftDaySpan(
 						new Date(shift.checkIn),
 						shift.checkOut ? new Date(shift.checkOut) : new Date(),
@@ -3654,6 +3726,7 @@ export class AttendanceService {
 				})),
 				ongoingShifts: ongoingShifts.map((shift) => ({
 					...shift,
+					overtime: '0h 0m',
 					shiftDaySpan: this.calculateShiftDaySpan(new Date(shift.checkIn), new Date()),
 				})),
 			};
@@ -5016,22 +5089,23 @@ export class AttendanceService {
 					longestBreak,
 					shortestBreak,
 				},
+				//TODO: Return 0 for overtime in API; actual overtime is still calculated and stored. Revert when overtime may be exposed again.
 				timingPatterns: {
 					averageCheckInTime,
 					averageCheckOutTime,
 					punctualityScore,
-					overtimeFrequency,
+					overtimeFrequency: 0,
 				},
 				overtimeAnalytics: {
 					totalOvertimeHours: {
-						allTime: Math.round(overtimeAnalyticsAllTime.totalOvertimeHours * 10) / 10,
-						thisMonth: Math.round(overtimeAnalyticsThisMonth.totalOvertimeHours * 10) / 10,
-						thisWeek: Math.round(overtimeAnalyticsThisWeek.totalOvertimeHours * 10) / 10,
-						today: Math.round(overtimeAnalyticsToday.totalOvertimeHours * 10) / 10,
+						allTime: 0,
+						thisMonth: 0,
+						thisWeek: 0,
+						today: 0,
 					},
-					averageOvertimePerShift: Math.round(overtimeAnalyticsAllTime.averageOvertimePerShift * 10) / 10,
-					overtimeFrequency: Math.round(overtimeAnalyticsAllTime.overtimeFrequency * 10) / 10,
-					longestOvertimeShift: Math.round(overtimeAnalyticsAllTime.longestOvertimeShift * 10) / 10,
+					averageOvertimePerShift: 0,
+					overtimeFrequency: 0,
+					longestOvertimeShift: 0,
 				},
 				productivityInsights: {
 					workEfficiencyScore,
@@ -5336,20 +5410,20 @@ export class AttendanceService {
 					const attendanceRecords = attendanceByUser.get(user.uid) ?? [];
 					const totalShifts = attendanceRecords.length;
 					const totalHours = await calculateRegularHours(attendanceRecords, orgId);
-					const overtimeAnalytics = await this.calculateOvertimeAnalytics(
+					await this.calculateOvertimeAnalytics(
 						attendanceRecords,
 						orgId,
 						excludeOvertimeDates || [],
 					);
-					const overtimeHours = overtimeAnalytics.totalOvertimeHours;
 					const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
 					const userName = fullName || user.username || 'Unknown User';
+					//TODO: Return 0 for overtime in API; actual overtime is still calculated and stored. Revert when overtime may be exposed again.
 					return {
 						userId: user.uid,
 						userName,
 						totalShifts,
 						totalHours: Math.round(totalHours * 10) / 10,
-						overtimeHours: Math.round(overtimeHours * 10) / 10,
+						overtimeHours: 0,
 						checkIns: includeCheckIns ? attendanceRecords : [],
 					};
 				} catch (error) {
@@ -5378,7 +5452,8 @@ export class AttendanceService {
 			const totalUsers = userMetrics.length;
 			const totalShifts = userMetrics.reduce((sum, user) => sum + user.totalShifts, 0);
 			const totalHours = userMetrics.reduce((sum, user) => sum + user.totalHours, 0);
-			const totalOvertimeHours = userMetrics.reduce((sum, user) => sum + user.overtimeHours, 0);
+			//TODO: Return 0 for overtime in API; actual overtime is still calculated and stored. Revert when overtime may be exposed again.
+			const totalOvertimeHours = 0;
 			const averageHoursPerUser = totalUsers > 0 ? Math.round((totalHours / totalUsers) * 10) / 10 : 0;
 
 			const response = {
@@ -5394,7 +5469,7 @@ export class AttendanceService {
 						totalUsers,
 						totalShifts,
 						totalHours: Math.round(totalHours * 10) / 10,
-						totalOvertimeHours: Math.round(totalOvertimeHours * 10) / 10,
+						totalOvertimeHours: 0,
 						averageHoursPerUser,
 					},
 					userMetrics,
@@ -5753,12 +5828,13 @@ export class AttendanceService {
 			const attendanceStreak = this.calculateAttendanceStreak(userExists.uid);
 
 			// Format response
+			//TODO: Return 0 for overtime in API; actual overtime is still calculated and stored. Revert when overtime may be exposed again.
 			const userAnalytics = {
 				totalRecords,
 				attendanceRate: Math.round(attendanceRate * 10) / 10,
 				averageHoursPerDay: Math.round((totalWorkMinutes / 60 / workingDays) * 10) / 10,
 				punctualityScore: Math.round(productivityMetrics.punctualityScore * 10) / 10,
-				overtimeFrequency: Math.round(productivityMetrics.overtimeFrequency * 10) / 10,
+				overtimeFrequency: 0,
 				averageCheckInTime,
 				averageCheckOutTime,
 				totalWorkHours: Math.round((totalWorkMinutes / 60) * 10) / 10,
@@ -6524,11 +6600,12 @@ export class AttendanceService {
 				}
 			}
 
+			//TODO: Return 0 for overtime in API; actual overtime is still calculated and stored. Revert when overtime may be exposed again.
 			return {
 				totalEmployees: users.length,
 				totalHours: TimeCalculatorUtil.roundToHours(totalHours, TimeCalculatorUtil.PRECISION.HOURS),
 				totalShifts: attendanceRecords.length,
-				overtimeHours: TimeCalculatorUtil.roundToHours(overtimeHours, TimeCalculatorUtil.PRECISION.HOURS),
+				overtimeHours: 0,
 			};
 		} catch (error) {
 			this.logger.error('Error calculating totals:', error);

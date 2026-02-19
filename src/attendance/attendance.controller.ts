@@ -5339,6 +5339,11 @@ Manually triggers the overtime policy check system to identify employees working
 									branchName: { type: 'string', example: 'Main Branch' },
 									checkInTime: { type: 'string', format: 'date-time' },
 									status: { type: 'string', example: 'PRESENT' },
+									shiftStartAddress: {
+										type: 'string',
+										nullable: true,
+										description: 'Decoded full address of shift start (clock-in) location',
+									},
 								},
 							},
 						},

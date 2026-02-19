@@ -218,6 +218,8 @@ export class RouteOptionsDto {
 // This service uses NestJS Cache Manager for caching geocoding and routing results.
 // The cache is configured globally in app.module.ts and can be backed by memory
 // or external stores like Redis depending on configuration.
+// Reverse geocode: cache key gmaps:reverse-geocode:${md5(roundedCoords)}, TTL 24h;
+// coordinates rounded to 4 decimals (~11m) for key; outbound API calls are serialized (one at a time).
 // ======================================================
 
 @Injectable()
@@ -602,7 +604,9 @@ export class GoogleMapsService implements OnModuleInit {
   }
 
   /**
-   * Enhanced reverse geocoding with caching and validation
+   * Enhanced reverse geocoding with caching and validation.
+   * Cache: key gmaps:reverse-geocode:${md5(roundedCoords)}, TTL 24h. Coordinates rounded to 4 decimals (~11m) for key.
+   * Outbound API calls are serialized via a global queue (one at a time).
    * @param coordinates The coordinates to reverse geocode
    * @param options Optional reverse geocoding options
    * @returns Geocoding result with address details
@@ -661,6 +665,29 @@ export class GoogleMapsService implements OnModuleInit {
     } catch (error) {
       this.logger.error(`[${operationId}] Reverse geocoding failed: ${error.message}`);
       throw error;
+    }
+  }
+
+  /**
+   * Get formatted address string for coordinates. Uses same cache and queue as reverseGeocode.
+   * @param latitude Latitude
+   * @param longitude Longitude
+   * @param fallback Returned on failure or empty result (default 'Address unavailable')
+   * @returns Formatted address string or fallback
+   */
+  async getAddressForCoordinates(
+    latitude: number,
+    longitude: number,
+    fallback: string = 'Address unavailable',
+  ): Promise<string> {
+    try {
+      const result = await this.reverseGeocode({ latitude, longitude });
+      return result?.formattedAddress ?? fallback;
+    } catch (error) {
+      this.logger.debug(
+        `getAddressForCoordinates failed for ${latitude}, ${longitude}: ${(error as Error).message}`,
+      );
+      return fallback;
     }
   }
 

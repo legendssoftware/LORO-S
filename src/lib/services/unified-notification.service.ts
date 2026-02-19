@@ -305,8 +305,8 @@ export class UnifiedNotificationService {
 			NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
 			{
 				event: NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
-				title: '⏰ Overtime Alert',
-				messageTemplate: 'Hi {userName}! ⏰ You\'ve worked {overtimeMinutes:duration} of overtime today. Great dedication! Please ensure you get adequate rest and consider checking out when possible.',
+				title: '⏰ Beyond Expected Hours',
+				messageTemplate: 'Hi {userName}! You\'ve been working {overtimeMinutes:duration} beyond your expected hours today. Great dedication! Please ensure you get adequate rest and consider checking out when possible.',
 				priority: NotificationPriority.HIGH,
 				channel: NotificationChannel.GENERAL,
 				defaultData: { screen: '/hr/attendance', action: 'attendance_overtime' },

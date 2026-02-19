@@ -213,12 +213,134 @@ export interface MapConfigType {
 	}>;
 }
 
+/** Base shape for any map marker; payload is Leaflet-ready (position, markerType for styling). */
+export interface MapMarkerBase {
+	id: string | number;
+	name: string;
+	position: [number, number];
+	latitude: number;
+	longitude: number;
+	markerType: string;
+	[key: string]: any;
+}
+
+/** Lead marker from map report (markerType: 'lead'). */
+export interface MapLeadMarkerType extends MapMarkerBase {
+	markerType: 'lead';
+	status?: string;
+	timestamp?: string;
+	leadData?: Record<string, any>;
+	location?: { address?: string; imageUrl?: string };
+	owner?: { uid: number; name: string };
+	client?: { uid: number; name: string };
+	interactionCount?: number;
+}
+
+/** Shift start marker (markerType: 'shift-start'). */
+export interface MapShiftStartMarkerType extends MapMarkerBase {
+	markerType: 'shift-start';
+	status?: string;
+	timestamp?: string;
+	attendanceData?: Record<string, any>;
+	owner?: { uid: number; name: string; phone?: string; photoURL?: string };
+	location?: { address?: string; imageUrl?: string };
+}
+
+/** Shift end marker (markerType: 'shift-end'). */
+export interface MapShiftEndMarkerType extends MapMarkerBase {
+	markerType: 'shift-end';
+	status?: string;
+	timestamp?: string;
+	duration?: number;
+	attendanceData?: Record<string, any>;
+	owner?: { uid: number; name: string; phone?: string; photoURL?: string };
+	location?: { address?: string; imageUrl?: string };
+}
+
+/** Check-in / visit marker (markerType: 'check-in-visit'). */
+export interface MapCheckInVisitMarkerType extends MapMarkerBase {
+	markerType: 'check-in-visit';
+	status?: string;
+	timestamp?: string;
+	checkInData?: Record<string, any>;
+	owner?: { uid: number; name: string };
+	client?: { uid: number; name: string };
+	location?: { address?: string; imageUrl?: string };
+}
+
+/** Journal marker (markerType: 'journal'). */
+export interface MapJournalMarkerType extends MapMarkerBase {
+	markerType: 'journal';
+	status?: string;
+	timestamp?: string;
+	journalData?: Record<string, any>;
+	owner?: { uid: number; name: string };
+	clientName?: string;
+	location?: { address?: string; imageUrl?: string };
+}
+
+/** Task marker (markerType: 'task'). */
+export interface MapTaskMarkerType extends MapMarkerBase {
+	markerType: 'task';
+	status?: string;
+	timestamp?: string;
+	taskData?: Record<string, any>;
+	creator?: { uid: number; name: string };
+	client?: { uid: number; name: string };
+	location?: { address?: string; imageUrl?: string };
+}
+
+/** Claim marker (markerType: 'claim'). */
+export interface MapClaimMarkerType extends MapMarkerBase {
+	markerType: 'claim';
+	status?: string;
+	amount?: number;
+	claimData?: Record<string, any>;
+	owner?: { uid: number; name: string };
+	location?: { address?: string };
+}
+
+export type MapMarkerUnion =
+	| MapWorkerType
+	| MapClientType
+	| MapCompetitorType
+	| MapQuotationType
+	| MapLeadMarkerType
+	| MapShiftStartMarkerType
+	| MapShiftEndMarkerType
+	| MapCheckInVisitMarkerType
+	| MapJournalMarkerType
+	| MapTaskMarkerType
+	| MapClaimMarkerType
+	| MapMarkerBase;
+
 export interface MapDataResponse {
 	workers: MapWorkerType[];
 	clients: MapClientType[];
 	competitors: MapCompetitorType[];
 	quotations: MapQuotationType[];
+	/** Lead markers with location (Leaflet-ready). */
+	leads: MapLeadMarkerType[];
+	/** Shift start locations (attendance). */
+	shiftStarts: MapShiftStartMarkerType[];
+	/** Shift end locations (attendance). */
+	shiftEnds: MapShiftEndMarkerType[];
+	/** Client visit / check-in locations. */
+	checkIns: MapCheckInVisitMarkerType[];
+	/** Journal entry markers (by client location). */
+	journals?: MapJournalMarkerType[];
+	/** Task markers (by client location). */
+	tasks?: MapTaskMarkerType[];
+	/** Claim markers. */
+	claims?: MapClaimMarkerType[];
+	/** All markers combined for Leaflet; filter client-side by markerType. */
+	allMarkers: MapMarkerUnion[];
 	events: MapEventType[];
 	mapConfig: MapConfigType;
+	/** Optional analytics/summary from generator. */
+	analytics?: {
+		totalMarkers: number;
+		markerBreakdown?: Record<string, MapMarkerUnion[]>;
+	};
 }
 

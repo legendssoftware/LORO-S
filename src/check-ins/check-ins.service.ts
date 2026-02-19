@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException, Logger, Inject, ForbiddenException } from '@nestjs/common';
 import { CreateCheckInDto } from './dto/create-check-in.dto';
-import { Repository, IsNull, LessThan } from 'typeorm';
+import { Repository, IsNull, LessThan, DataSource, EntityManager } from 'typeorm';
 import { CheckIn } from './entities/check-in.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateCheckOutDto } from './dto/create-check-out.dto';
@@ -25,6 +25,7 @@ import { LeadSource } from '../lib/enums/lead.enums';
 import { ContactMade } from '../lib/enums/client.enums';
 import { Address } from '../lib/interfaces/address.interface';
 import { DomainReportResponseDto } from '../lib/dto/domain-report.dto';
+import { runInTransaction } from '../lib/utils/transaction.util';
 
 @Injectable()
 export class CheckInsService {
@@ -48,6 +49,7 @@ export class CheckInsService {
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		private readonly googleMapsService: GoogleMapsService,
 		private readonly leadsService: LeadsService,
+		private readonly dataSource: DataSource,
 	) {
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
 	}
@@ -81,7 +83,7 @@ export class CheckInsService {
 
 	/**
 	 * Clear all check-ins list cache so next getAllCheckIns returns fresh data (same manner as UserService invalidateUserCache).
-	 * Called after check-in and check-out writes.
+	 * Used when org is unknown (e.g. autoEndStaleVisits). Prefer clearCheckInsListCacheForOrg when orgId is known.
 	 */
 	private async clearCheckInsListCache(): Promise<void> {
 		try {
@@ -93,6 +95,24 @@ export class CheckInsService {
 			}
 		} catch (error) {
 			this.logger.error('Error clearing check-ins cache:', (error as Error).message);
+		}
+	}
+
+	/**
+	 * Clear list cache only for the given org (selective invalidation). Safe when store.keys() is unavailable.
+	 */
+	private async clearCheckInsListCacheForOrg(orgId: string): Promise<void> {
+		if (!orgId) return;
+		const listKeyPrefix = this.getCacheKey(`list_${orgId}_`);
+		try {
+			const keys = await this.cacheManager.store.keys();
+			const keysToDelete = keys.filter((key: string) => key.startsWith(listKeyPrefix));
+			await Promise.all(keysToDelete.map((key: string) => this.cacheManager.del(key)));
+			if (keysToDelete.length > 0) {
+				this.logger.debug(`Cleared ${keysToDelete.length} check-ins list cache key(s) for org ${orgId}`);
+			}
+		} catch (error) {
+			this.logger.warn('Check-ins cache store.keys() unavailable, skipping selective invalidation:', (error as Error).message);
 		}
 	}
 
@@ -296,48 +316,62 @@ export class CheckInsService {
 	}
 
 	/**
-	 * Link quotation to check-in and update quotation status
+	 * Link quotation to check-in and update quotation status.
+	 * When manager is provided (e.g. from queryRunner.manager), runs in the same transaction.
 	 */
 	private async linkQuotationToCheckIn(
 		checkInId: number,
 		quotationUid?: number,
 		quotationNumber?: string,
 		orgId?: string,
+		manager?: EntityManager,
 	): Promise<{ quotationNumber?: string; quotationStatus?: string; quotationUid?: number } | null> {
 		try {
-			// If quotationUid is provided, use it; otherwise try to find by quotationNumber
 			let quotation: Quotation | null = null;
 
-			if (quotationUid) {
-				quotation = await this.quotationRepository.findOne({
-					where: { uid: quotationUid },
-					select: ['uid', 'quotationNumber', 'status', 'organisationUid'],
+			if (manager) {
+				if (quotationUid) {
+					quotation = await manager.findOne(Quotation, {
+						where: { uid: quotationUid },
+						select: ['uid', 'quotationNumber', 'status', 'organisationUid'],
+					});
+				} else if (quotationNumber) {
+					quotation = await manager.findOne(Quotation, {
+						where: { quotationNumber },
+						select: ['uid', 'quotationNumber', 'status', 'organisationUid'],
+					});
+				}
+				if (!quotation) {
+					this.logger.warn(`Quotation not found: ${quotationUid || quotationNumber}`);
+					return null;
+				}
+				await manager.update(CheckIn, checkInId, {
+					quotationUid: quotation.uid,
+					quotationNumber: quotation.quotationNumber,
+					quotationStatus: quotation.status,
 				});
-			} else if (quotationNumber) {
-				quotation = await this.quotationRepository.findOne({
-					where: { quotationNumber },
-					select: ['uid', 'quotationNumber', 'status', 'organisationUid'],
+			} else {
+				if (quotationUid) {
+					quotation = await this.quotationRepository.findOne({
+						where: { uid: quotationUid },
+						select: ['uid', 'quotationNumber', 'status', 'organisationUid'],
+					});
+				} else if (quotationNumber) {
+					quotation = await this.quotationRepository.findOne({
+						where: { quotationNumber },
+						select: ['uid', 'quotationNumber', 'status', 'organisationUid'],
+					});
+				}
+				if (!quotation) {
+					this.logger.warn(`Quotation not found: ${quotationUid || quotationNumber}`);
+					return null;
+				}
+				await this.checkInRepository.update(checkInId, {
+					quotationUid: quotation.uid,
+					quotationNumber: quotation.quotationNumber,
+					quotationStatus: quotation.status,
 				});
 			}
-
-			if (!quotation) {
-				this.logger.warn(`Quotation not found: ${quotationUid || quotationNumber}`);
-				return null;
-			}
-
-			// Validate quotation belongs to organization if orgId provided
-			if (orgId && quotation.organisationUid) {
-				// Note: organisationUid in quotation is number, orgId is string (Clerk org ID)
-				// We may need to resolve this, but for now we'll skip strict validation
-				// as the organisation structure might differ
-			}
-
-			// Update check-in with quotation information
-			await this.checkInRepository.update(checkInId, {
-				quotationUid: quotation.uid,
-				quotationNumber: quotation.quotationNumber,
-				quotationStatus: quotation.status,
-			});
 
 			this.logger.log(`Quotation ${quotation.quotationNumber} linked to check-in ${checkInId}`);
 
@@ -347,7 +381,7 @@ export class CheckInsService {
 				quotationUid: quotation.uid,
 			};
 		} catch (error) {
-			this.logger.error(`Failed to link quotation to check-in: ${error.message}`, error.stack);
+			this.logger.error(`Failed to link quotation to check-in: ${(error as Error).message}`, (error as Error).stack);
 			return null;
 		}
 	}
@@ -377,132 +411,110 @@ export class CheckInsService {
 				throw new BadRequestException('Organization ID is required');
 			}
 
-			// Resolve user: by clerkUserId (token) or by owner.uid (DTO, string). Org and user only - no branch.
-			let user: User | null = null;
-			if (clerkUserId) {
-				user = await this.userRepository.findOne({
-					where: { clerkUserId },
-					relations: ['organisation'],
-				});
-			}
-			if (!user && ownerRef) {
-				const userWhere = typeof ownerRef === 'string' && ownerRef.startsWith('user_')
-					? { clerkUserId: ownerRef }
-					: { uid: Number(ownerRef) };
-				user = await this.userRepository.findOne({
-					where: userWhere,
-					relations: ['organisation'],
-				});
-			}
+			const { checkIn, user, clientExists } = await runInTransaction(this.dataSource, async (queryRunner) => {
+				// Resolve user: by clerkUserId (token) or by owner.uid (DTO, string). Org and user only - no branch.
+				let user: User | null = null;
+				if (clerkUserId) {
+					user = await queryRunner.manager.findOne(User, {
+						where: { clerkUserId },
+						relations: ['organisation'],
+					});
+				}
+				if (!user && ownerRef) {
+					const userWhere = typeof ownerRef === 'string' && ownerRef.startsWith('user_')
+						? { clerkUserId: ownerRef }
+						: { uid: Number(ownerRef) };
+					user = await queryRunner.manager.findOne(User, {
+						where: userWhere,
+						relations: ['organisation'],
+					});
+				}
 
-			if (!user) {
-				const ref = ownerRef ?? clerkUserId;
-				this.logger.error(`[${operationId}] User not found: ${ref}`);
-				throw new NotFoundException('User not found');
-			}
+				if (!user) {
+					const ref = ownerRef ?? clerkUserId;
+					throw new NotFoundException('User not found');
+				}
 
-			// Validate user belongs to the organization using Clerk org ID (organisationRef)
-			if (user.organisationRef && user.organisationRef !== orgId) {
-				this.logger.error(
-					`[${operationId}] User ${user.uid} belongs to org ${user.organisationRef}, not ${orgId}`,
-				);
-				throw new BadRequestException('User does not belong to the specified organization');
-			}
+				// Validate user belongs to the organization using Clerk org ID (organisationRef)
+				if (user.organisationRef && user.organisationRef !== orgId) {
+					throw new BadRequestException('User does not belong to the specified organization');
+				}
 
-			// Enhanced data mapping - org and user only, no branch checks
-			this.logger.debug(`[${operationId}] Creating check-in record with enhanced data mapping`);
-			
-			// Prefer clerkUserId from token, then user's clerkUserId from database
-			const resolvedClerkUserId = clerkUserId || user.clerkUserId;
-			if (!resolvedClerkUserId) {
-				this.logger.error(`[${operationId}] No clerkUserId available - cannot set ownerClerkUserId`);
-				throw new BadRequestException('User Clerk ID is required for check-in');
-			}
+				const resolvedClerkUserId = clerkUserId || user.clerkUserId;
+				if (!resolvedClerkUserId) {
+					throw new BadRequestException('User Clerk ID is required for check-in');
+				}
 
-			// Check if client exists when client.uid is provided
-			let clientExists = false;
+				// Check if client exists when client.uid is provided
+				let clientExists = false;
+				if (createCheckInDto.client?.uid) {
+					const existingClient = await queryRunner.manager.findOne(Client, {
+						where: { uid: createCheckInDto.client.uid, isDeleted: false },
+					});
+					clientExists = !!existingClient;
+					this.logger.debug(`[${operationId}] Client ${createCheckInDto.client.uid} exists: ${clientExists}`);
+				}
+
+				this.logger.debug(`[${operationId}] Creating check-in record with enhanced data mapping`);
+
+				const checkInData: any = {
+					...createCheckInDto,
+					checkInTime: createCheckInDto.checkInTime ? new Date(createCheckInDto.checkInTime) : new Date(),
+					owner: { clerkUserId: resolvedClerkUserId } as User,
+					ownerClerkUserId: resolvedClerkUserId,
+					organisation: { clerkOrgId: orgId } as Organisation,
+					organisationUid: orgId,
+					contactFullName: createCheckInDto.contactFullName,
+					contactImage: createCheckInDto.contactImage,
+					contactCellPhone: createCheckInDto.contactCellPhone,
+					contactLandline: createCheckInDto.contactLandline,
+					contactAddress: createCheckInDto.contactAddress,
+					companyName: createCheckInDto.companyName,
+					businessType: createCheckInDto.businessType,
+					personSeenPosition: createCheckInDto.personSeenPosition,
+					meetingLink: createCheckInDto.meetingLink,
+					salesValue: createCheckInDto.salesValue,
+					quotationNumber: createCheckInDto.quotationNumber,
+					quotationUid: createCheckInDto.quotationUid,
+					leadUid: null,
+					methodOfContact: createCheckInDto.methodOfContact,
+					buildingType: createCheckInDto.buildingType,
+					contactMade: createCheckInDto.contactMade === false ? ContactMade.NO : ContactMade.YES,
+					branch: null,
+					branchUid: null,
+				};
+
+				if (clientExists && createCheckInDto.client?.uid) {
+					checkInData.client = { uid: createCheckInDto.client.uid };
+					checkInData.clientUid = createCheckInDto.client.uid;
+				} else {
+					checkInData.client = null;
+					checkInData.clientUid = null;
+				}
+
+				const saved = await queryRunner.manager.save(CheckIn, checkInData);
+				if (!saved?.uid) {
+					throw new BadRequestException('Failed to create check-in record');
+				}
+				this.logger.debug(`[${operationId}] Check-in record created successfully with ID: ${saved.uid}`);
+				return { checkIn: saved, user, clientExists };
+			});
+
+			// Post-transaction: create lead when needed (outside transaction; LeadsService is cross-service)
 			let createdLead: { uid: number } | null = null;
-
-			if (createCheckInDto.client?.uid) {
-				const existingClient = await this.clientRepository.findOne({
-					where: { uid: createCheckInDto.client.uid, isDeleted: false },
-				});
-				clientExists = !!existingClient;
-				this.logger.debug(`[${operationId}] Client ${createCheckInDto.client.uid} exists: ${clientExists}`);
-			}
-
-			// If client doesn't exist or client.uid is not provided, create a lead (no branch)
-			if (!clientExists && (!createCheckInDto.client?.uid || createCheckInDto.contactFullName || createCheckInDto.contactCellPhone || createCheckInDto.contactLandline)) {
-				this.logger.debug(`[${operationId}] Client not found or not provided, creating lead from contact information`);
+			const resolvedClerkUserId = clerkUserId || user.clerkUserId;
+			const needLead =
+				!createCheckInDto.client?.uid ||
+				createCheckInDto.contactFullName ||
+				createCheckInDto.contactCellPhone ||
+				createCheckInDto.contactLandline;
+			if (!clientExists && needLead) {
 				createdLead = await this.createLeadFromCheckIn(createCheckInDto, orgId, resolvedClerkUserId);
 				if (createdLead) {
 					this.logger.log(`[${operationId}] Lead created: ${createdLead.uid}`);
+					await this.checkInRepository.update(checkIn.uid, { leadUid: createdLead.uid });
 				}
 			}
-
-			const checkInData: any = {
-				...createCheckInDto,
-				checkInTime: createCheckInDto.checkInTime ? new Date(createCheckInDto.checkInTime) : new Date(),
-				// Set owner relation using clerkUserId (not uid) to ensure ownerClerkUserId is set correctly
-				owner: {
-					clerkUserId: resolvedClerkUserId,
-				} as User,
-				ownerClerkUserId: resolvedClerkUserId, // Explicitly set the foreign key column
-				organisation: {
-					clerkOrgId: orgId, // Use Clerk org ID string for relation
-				} as Organisation,
-				organisationUid: orgId, // Clerk org ID string - key relationship identifier
-				// Include new contact and sales fields
-				contactFullName: createCheckInDto.contactFullName,
-				contactImage: createCheckInDto.contactImage,
-				contactCellPhone: createCheckInDto.contactCellPhone,
-				contactLandline: createCheckInDto.contactLandline,
-				contactAddress: createCheckInDto.contactAddress,
-				// Company and business information fields
-				companyName: createCheckInDto.companyName,
-				businessType: createCheckInDto.businessType,
-				personSeenPosition: createCheckInDto.personSeenPosition,
-				meetingLink: createCheckInDto.meetingLink,
-				salesValue: createCheckInDto.salesValue,
-				quotationNumber: createCheckInDto.quotationNumber,
-				quotationUid: createCheckInDto.quotationUid,
-				// Link lead if created
-				leadUid: createdLead?.uid,
-				// New check-in enhancement fields
-				methodOfContact: createCheckInDto.methodOfContact,
-				buildingType: createCheckInDto.buildingType,
-				contactMade: createCheckInDto.contactMade === false ? ContactMade.NO : ContactMade.YES,
-				// No branch - visits use org and user only
-				branch: null,
-				branchUid: null,
-			};
-
-			// Log when setting ownerClerkUserId and organisationUid for debugging
-			this.logger.debug(`[${operationId}] Setting ownerClerkUserId: ${resolvedClerkUserId}`);
-			if (orgId) {
-				this.logger.debug(`[${operationId}] Setting organisationUid: ${orgId}`);
-			}
-
-			// Only set client if it exists
-			if (clientExists && createCheckInDto.client?.uid) {
-				checkInData.client = { uid: createCheckInDto.client.uid };
-				checkInData.clientUid = createCheckInDto.client.uid;
-			} else {
-				checkInData.client = null;
-				checkInData.clientUid = null;
-			}
-
-			// Core operation: Save check-in to database
-			const checkIn = await this.checkInRepository.save(checkInData);
-
-			if (!checkIn) {
-				this.logger.error(`[${operationId}] Failed to create check-in record - database returned null`);
-				throw new BadRequestException('Failed to create check-in record');
-			}
-
-			this.logger.debug(`[${operationId}] Check-in record created successfully with ID: ${checkIn.uid}`);
-
-			await this.clearCheckInsListCache();
 
 			// ============================================================
 			// EARLY RETURN: Respond to client immediately after successful save
@@ -525,6 +537,8 @@ export class CheckInsService {
 			setImmediate(async () => {
 				try {
 					this.logger.debug(`🔄 [${operationId}] Starting post-response processing for check-in: ${checkIn.uid}`);
+
+					await this.clearCheckInsListCacheForOrg(orgId);
 
 					// 1. Reverse geocode check-in location once and save fullAddress (decode once, save in column)
 					try {
@@ -895,176 +909,112 @@ export class CheckInsService {
 				throw new BadRequestException('Owner or Clerk ID is required for check-out');
 			}
 
-			// Resolve user by clerkUserId or owner.uid (string)
-			let user: User | null = null;
-			if (clerkUserId) {
-				user = await this.userRepository.findOne({
-					where: { clerkUserId },
-					select: ['uid', 'clerkUserId', 'name'],
+			const { checkIn, user, duration } = await runInTransaction(this.dataSource, async (queryRunner) => {
+				let user: User | null = null;
+				if (clerkUserId) {
+					user = await queryRunner.manager.findOne(User, {
+						where: { clerkUserId },
+						select: ['uid', 'clerkUserId', 'name'],
+					});
+				}
+				if (!user && ownerRef) {
+					const userWhere = typeof ownerRef === 'string' && ownerRef.startsWith('user_')
+						? { clerkUserId: ownerRef }
+						: { uid: Number(ownerRef) };
+					user = await queryRunner.manager.findOne(User, {
+						where: userWhere,
+						select: ['uid', 'clerkUserId', 'name'],
+					});
+				}
+				if (!user) {
+					throw new NotFoundException('User not found');
+				}
+
+				const clerkId = user.clerkUserId;
+				this.logger.debug(`[${operationId}] Finding active check-in for user: ${clerkId}`);
+				const checkIn = await queryRunner.manager.findOne(CheckIn, {
+					where: { ownerClerkUserId: clerkId },
+					order: { checkInTime: 'DESC' },
+					relations: ['owner', 'client', 'branch'],
 				});
-			}
-			if (!user && ownerRef) {
-				const userWhere = typeof ownerRef === 'string' && ownerRef.startsWith('user_')
-					? { clerkUserId: ownerRef }
-					: { uid: Number(ownerRef) };
-				user = await this.userRepository.findOne({
-					where: userWhere,
-					select: ['uid', 'clerkUserId', 'name'],
-				});
-			}
-			if (!user) {
-				this.logger.error(`[${operationId}] User not found: ${ownerRef ?? clerkUserId}`);
-				throw new NotFoundException('User not found');
-			}
 
-			const clerkId = user.clerkUserId;
-			this.logger.debug(`[${operationId}] Finding active check-in for user: ${clerkId}`);
-			const checkIn = await this.checkInRepository.findOne({
-				where: { ownerClerkUserId: clerkId },
-				order: {
-					checkInTime: 'DESC',
-				},
-				relations: ['owner', 'client', 'branch'],
-			});
+				if (!checkIn) {
+					throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
+				}
+				if (checkIn.checkOutTime) {
+					throw new BadRequestException('User has already checked out');
+				}
 
-			if (!checkIn) {
-				this.logger.error(`[${operationId}] No active check-in found for user: ${clerkId}`);
-				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
-			}
+				this.logger.debug(`[${operationId}] Found active check-in with ID: ${checkIn.uid}, calculating duration`);
 
-			if (checkIn.checkOutTime) {
-				this.logger.warn(`[${operationId}] User ${clerkId} has already checked out`);
-				throw new BadRequestException('User has already checked out');
-			}
-
-			this.logger.debug(`[${operationId}] Found active check-in with ID: ${checkIn.uid}, calculating duration`);
-
-			// Calculate duration (needed for response)
-			const checkOutTime = new Date(createCheckOutDto.checkOutTime);
-			const checkInTime = new Date(checkIn.checkInTime);
-
-			const minutesWorked = differenceInMinutes(checkOutTime, checkInTime);
-			const hoursWorked = differenceInHours(checkOutTime, checkInTime);
-			const remainingMinutes = minutesWorked % 60;
-
-			const duration = `${hoursWorked}h ${remainingMinutes}m`;
-			this.logger.debug(
-				`[${operationId}] Calculated work duration: ${duration} (${minutesWorked} minutes total)`,
-			);
-
-			// Core operation: Update check-in record with check-out data (without fullAddress - will be updated later)
-			this.logger.debug(`[${operationId}] Updating check-in record with check-out data`);
-
-			const updateData: any = {
-				checkOutTime: createCheckOutDto?.checkOutTime,
-				checkOutPhoto: createCheckOutDto?.checkOutPhoto,
-				checkOutLocation: createCheckOutDto?.checkOutLocation,
-				duration: duration,
-				// fullAddress will be updated in post-response processing
-			};
-
-			// Preserve or set ownerClerkUserId and organisationUid
-			// Use existing values if present, otherwise set from parameters
-			if (checkIn.ownerClerkUserId) {
-				updateData.ownerClerkUserId = checkIn.ownerClerkUserId;
-				this.logger.debug(`[${operationId}] Preserving existing ownerClerkUserId: ${checkIn.ownerClerkUserId}`);
-			} else if (clerkUserId) {
-				updateData.ownerClerkUserId = clerkUserId;
-				this.logger.debug(`[${operationId}] Setting ownerClerkUserId from parameter: ${clerkUserId}`);
-			} else {
-				this.logger.warn(`[${operationId}] Warning: No ownerClerkUserId available - existing value is missing and clerkUserId not provided`);
-			}
-
-			if (checkIn.organisationUid) {
-				updateData.organisationUid = checkIn.organisationUid;
-				this.logger.debug(`[${operationId}] Preserving existing organisationUid: ${checkIn.organisationUid}`);
-			} else if (orgId) {
-				updateData.organisationUid = orgId;
-				this.logger.debug(`[${operationId}] Setting organisationUid from parameter: ${orgId}`);
-			} else {
-				this.logger.warn(`[${operationId}] Warning: No organisationUid available - existing value is missing and orgId not provided`);
-			}
-
-			// Add optional fields if provided
-			if (createCheckOutDto?.notes !== undefined) {
-				updateData.notes = createCheckOutDto.notes;
-			}
-			if (createCheckOutDto?.resolution !== undefined) {
-				updateData.resolution = createCheckOutDto.resolution;
-			}
-			if (createCheckOutDto?.client?.uid !== undefined) {
-				updateData.client = { uid: createCheckOutDto.client.uid };
-			}
-
-			// Add new contact information fields if provided
-			if (createCheckOutDto?.contactFullName !== undefined) {
-				updateData.contactFullName = createCheckOutDto.contactFullName;
-			}
-			if (createCheckOutDto?.contactImage !== undefined) {
-				updateData.contactImage = createCheckOutDto.contactImage;
-			}
-			if (createCheckOutDto?.contactCellPhone !== undefined) {
-				updateData.contactCellPhone = createCheckOutDto.contactCellPhone;
-			}
-			if (createCheckOutDto?.contactLandline !== undefined) {
-				updateData.contactLandline = createCheckOutDto.contactLandline;
-			}
-			if (createCheckOutDto?.contactAddress !== undefined) {
-				updateData.contactAddress = createCheckOutDto.contactAddress;
-			}
-
-			// Add company and business information fields if provided
-			if (createCheckOutDto?.companyName !== undefined) {
-				updateData.companyName = createCheckOutDto.companyName;
-			}
-			if (createCheckOutDto?.businessType !== undefined) {
-				updateData.businessType = createCheckOutDto.businessType;
-			}
-			if (createCheckOutDto?.personSeenPosition !== undefined) {
-				updateData.personSeenPosition = createCheckOutDto.personSeenPosition;
-			}
-			if (createCheckOutDto?.meetingLink !== undefined) {
-				updateData.meetingLink = createCheckOutDto.meetingLink;
-			}
-
-			// Add sales value if provided
-			if (createCheckOutDto?.salesValue !== undefined) {
-				updateData.salesValue = createCheckOutDto.salesValue;
-			}
-
-			// Add new check-in enhancement fields if provided
-			if (createCheckOutDto?.methodOfContact !== undefined) {
-				updateData.methodOfContact = createCheckOutDto.methodOfContact;
-			}
-			if (createCheckOutDto?.buildingType !== undefined) {
-				updateData.buildingType = createCheckOutDto.buildingType;
-			}
-			if (createCheckOutDto?.contactMade !== undefined) {
-				updateData.contactMade = createCheckOutDto.contactMade === true ? ContactMade.YES : ContactMade.NO;
-			}
-
-			// Link quotation if provided
-			if (createCheckOutDto?.quotationUid || createCheckOutDto?.quotationNumber) {
-				const quotationLink = await this.linkQuotationToCheckIn(
-					checkIn.uid,
-					createCheckOutDto.quotationUid,
-					createCheckOutDto.quotationNumber,
-					orgId,
+				const checkOutTime = new Date(createCheckOutDto.checkOutTime);
+				const checkInTime = new Date(checkIn.checkInTime);
+				const minutesWorked = differenceInMinutes(checkOutTime, checkInTime);
+				const hoursWorked = differenceInHours(checkOutTime, checkInTime);
+				const remainingMinutes = minutesWorked % 60;
+				const duration = `${hoursWorked}h ${remainingMinutes}m`;
+				this.logger.debug(
+					`[${operationId}] Calculated work duration: ${duration} (${minutesWorked} minutes total)`,
 				);
-				if (quotationLink) {
-					// Quotation linking already updates the check-in, but we can add status if provided directly
-					if (createCheckOutDto?.quotationStatus !== undefined) {
+
+				const updateData: any = {
+					checkOutTime: createCheckOutDto?.checkOutTime,
+					checkOutPhoto: createCheckOutDto?.checkOutPhoto,
+					checkOutLocation: createCheckOutDto?.checkOutLocation,
+					duration,
+				};
+				if (checkIn.ownerClerkUserId) {
+					updateData.ownerClerkUserId = checkIn.ownerClerkUserId;
+				} else if (clerkUserId) {
+					updateData.ownerClerkUserId = clerkUserId;
+				}
+				if (checkIn.organisationUid) {
+					updateData.organisationUid = checkIn.organisationUid;
+				} else if (orgId) {
+					updateData.organisationUid = orgId;
+				}
+
+				if (createCheckOutDto?.notes !== undefined) updateData.notes = createCheckOutDto.notes;
+				if (createCheckOutDto?.resolution !== undefined) updateData.resolution = createCheckOutDto.resolution;
+				if (createCheckOutDto?.client?.uid !== undefined) updateData.client = { uid: createCheckOutDto.client.uid };
+				if (createCheckOutDto?.contactFullName !== undefined) updateData.contactFullName = createCheckOutDto.contactFullName;
+				if (createCheckOutDto?.contactImage !== undefined) updateData.contactImage = createCheckOutDto.contactImage;
+				if (createCheckOutDto?.contactCellPhone !== undefined) updateData.contactCellPhone = createCheckOutDto.contactCellPhone;
+				if (createCheckOutDto?.contactLandline !== undefined) updateData.contactLandline = createCheckOutDto.contactLandline;
+				if (createCheckOutDto?.contactAddress !== undefined) updateData.contactAddress = createCheckOutDto.contactAddress;
+				if (createCheckOutDto?.companyName !== undefined) updateData.companyName = createCheckOutDto.companyName;
+				if (createCheckOutDto?.businessType !== undefined) updateData.businessType = createCheckOutDto.businessType;
+				if (createCheckOutDto?.personSeenPosition !== undefined) updateData.personSeenPosition = createCheckOutDto.personSeenPosition;
+				if (createCheckOutDto?.meetingLink !== undefined) updateData.meetingLink = createCheckOutDto.meetingLink;
+				if (createCheckOutDto?.salesValue !== undefined) updateData.salesValue = createCheckOutDto.salesValue;
+				if (createCheckOutDto?.methodOfContact !== undefined) updateData.methodOfContact = createCheckOutDto.methodOfContact;
+				if (createCheckOutDto?.buildingType !== undefined) updateData.buildingType = createCheckOutDto.buildingType;
+				if (createCheckOutDto?.contactMade !== undefined) {
+					updateData.contactMade = createCheckOutDto.contactMade === true ? ContactMade.YES : ContactMade.NO;
+				}
+
+				if (createCheckOutDto?.quotationUid || createCheckOutDto?.quotationNumber) {
+					const quotationLink = await this.linkQuotationToCheckIn(
+						checkIn.uid,
+						createCheckOutDto.quotationUid,
+						createCheckOutDto.quotationNumber,
+						orgId,
+						queryRunner.manager,
+					);
+					if (quotationLink && createCheckOutDto?.quotationStatus !== undefined) {
 						updateData.quotationStatus = createCheckOutDto.quotationStatus;
 					}
+				} else if (createCheckOutDto?.quotationStatus !== undefined) {
+					updateData.quotationStatus = createCheckOutDto.quotationStatus;
 				}
-			} else if (createCheckOutDto?.quotationStatus !== undefined) {
-				// If only status is provided without quotation link, update it
-				updateData.quotationStatus = createCheckOutDto.quotationStatus;
-			}
 
-			await this.checkInRepository.update(checkIn.uid, updateData);
+				this.logger.debug(`[${operationId}] Updating check-in record with check-out data within transaction`);
+				await queryRunner.manager.update(CheckIn, checkIn.uid, updateData);
 
-			await this.clearCheckInsListCache();
+				return { checkIn, user, duration };
+			});
+
+			const clerkId = user.clerkUserId;
 
 			// ============================================================
 			// EARLY RETURN: Respond to client immediately after successful update
@@ -1088,6 +1038,8 @@ export class CheckInsService {
 			setImmediate(async () => {
 				try {
 					this.logger.debug(`🔄 [${operationId}] Starting post-response processing for check-out: ${checkIn.uid}`);
+
+					await this.clearCheckInsListCacheForOrg(orgId ?? checkIn.organisationUid ?? '');
 
 					// 1. Reverse geocode the check-in location to get full address (skip if already decoded at check-in time)
 					let fullAddress: Address | null = null;
@@ -1591,6 +1543,11 @@ export class CheckInsService {
 			// Update photo URL and preserve/set relationship keys
 			await this.checkInRepository.update(checkInId, updateData);
 
+			const orgIdForCache = checkIn.organisationUid ?? orgId;
+			if (orgIdForCache) {
+				await this.clearCheckInsListCacheForOrg(orgIdForCache);
+			}
+
 			const duration = Date.now() - startTime;
 			this.logger.log(`✅ [${operationId}] Check-in photo updated successfully in ${duration}ms. Returning success.`);
 
@@ -1600,7 +1557,7 @@ export class CheckInsService {
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(
-				`❌ [${operationId}] Failed to update check-in photo after ${duration}ms: ${error.message}`,
+				`❌ [${operationId}] Failed to update check-in photo after ${duration}ms: ${(error as Error).message}`,
 				error.stack,
 			);
 			return {
@@ -1660,6 +1617,11 @@ export class CheckInsService {
 			// Update photo URL and preserve/set relationship keys
 			await this.checkInRepository.update(checkInId, updateData);
 
+			const orgIdForCache = checkIn.organisationUid ?? orgId;
+			if (orgIdForCache) {
+				await this.clearCheckInsListCacheForOrg(orgIdForCache);
+			}
+
 			const duration = Date.now() - startTime;
 			this.logger.log(`✅ [${operationId}] Check-out photo updated successfully in ${duration}ms. Returning success.`);
 
@@ -1669,7 +1631,7 @@ export class CheckInsService {
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(
-				`❌ [${operationId}] Failed to update check-out photo after ${duration}ms: ${error.message}`,
+				`❌ [${operationId}] Failed to update check-out photo after ${duration}ms: ${(error as Error).message}`,
 				error.stack,
 			);
 			return {
@@ -1797,6 +1759,10 @@ export class CheckInsService {
 			// Update visit details and preserve/set relationship keys
 			await this.checkInRepository.update(checkInId, updateData);
 
+			if (orgId ?? checkIn.organisationUid) {
+				await this.clearCheckInsListCacheForOrg(orgId ?? checkIn.organisationUid);
+			}
+
 			const duration = Date.now() - startTime;
 			this.logger.log(`✅ [${operationId}] Visit details updated successfully in ${duration}ms. Returning success.`);
 
@@ -1806,7 +1772,7 @@ export class CheckInsService {
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(
-				`❌ [${operationId}] Failed to update visit details after ${duration}ms: ${error.message}`,
+				`❌ [${operationId}] Failed to update visit details after ${duration}ms: ${(error as Error).message}`,
 				error.stack,
 			);
 			return {
@@ -1994,6 +1960,8 @@ export class CheckInsService {
 			// Update check-in with leadUid
 			checkIn.leadUid = leadResult.data.uid;
 			await this.checkInRepository.save(checkIn);
+
+			await this.clearCheckInsListCacheForOrg(orgId);
 
 			// Note: Lead cache invalidation is already handled by leadsService.create() internally
 			// Mobile-side React Query cache invalidation will handle UI updates

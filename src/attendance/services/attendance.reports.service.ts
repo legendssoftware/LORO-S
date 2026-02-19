@@ -915,11 +915,12 @@ export class AttendanceReportsService {
 		this.logger.log(`  - Today's Attendance Records: ${todayAttendance.length}`);
 
 		// Use employeeCategories consistently for all user lists
+		//TODO: Return 0 for overtime in API; actual overtime is still calculated and stored. Revert when overtime may be exposed again.
 		const morningReportData = {
 			organizationName: organization?.name || 'Organization',
 			reportDate: format(today, 'EEEE, MMMM do, yyyy'),
 			organizationStartTime,
-			totalOvertimeHours,
+			totalOvertimeHours: '0h 0m',
 			summary: {
 				totalEmployees,
 				presentCount,
@@ -935,7 +936,7 @@ export class AttendanceReportsService {
 			absentEmployees: employeeCategories.absentEmployees,
 			currentlyWorkingEmployees: employeeCategories.currentlyWorkingEmployees,
 			completedShiftEmployees: employeeCategories.completedShiftEmployees,
-			overtimeEmployees: employeeCategories.overtimeEmployees,
+			overtimeEmployees: [],
 			branchBreakdown,
 			targetPerformance,
 			insights,
@@ -1758,25 +1759,26 @@ export class AttendanceReportsService {
 		
 		this.logger.log(`Total overtime for evening report: ${totalOvertimeHours}`);
 
+		//TODO: Return 0 for overtime in API; actual overtime is still calculated and stored. Revert when overtime may be exposed again.
 		const eveningReportData = {
 			organizationName: organization?.name || 'Organization',
 			reportDate: format(today, 'EEEE, MMMM do, yyyy'),
 			organizationStartTime,
 			organizationCloseTime,
-			totalOvertimeHours,
+			totalOvertimeHours: '0h 0m',
 			employeeMetrics: templateEmployeeMetrics, // Use the properly mapped metrics
 			presentEmployees: employeeCategories.presentEmployees,
 			absentEmployees: employeeCategories.absentEmployees,
 			currentlyWorkingEmployees: employeeCategories.currentlyWorkingEmployees,
 			completedShiftEmployees: employeeCategories.completedShiftEmployees,
-			overtimeEmployees: employeeCategories.overtimeEmployees,
+			overtimeEmployees: [],
 			branchBreakdown,
 			targetPerformance,
 			summary: {
 				totalEmployees: totalEmployeesExpected,
 				completedShifts,
 				averageHours: Math.round(avgHours * 100) / 100,
-				totalOvertimeMinutes: Math.round(totalOvertimeMinutes),
+				totalOvertimeMinutes: 0,
 				totalActualHours: Math.round(totalActualHours * 100) / 100,
 				totalExpectedHours: Math.round(expectedDailyHours * 100) / 100,
 				productivityRate: Math.round(productivityRate * 100) / 100,

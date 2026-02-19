@@ -36,7 +36,7 @@ export class MapDataReportGenerator {
 	private readonly logger = new Logger(MapDataReportGenerator.name);
 	private readonly CACHE_PREFIX = 'mapdata:';
 	private readonly CACHE_TTL: number;
-	private readonly GEOCODE_CACHE_TTL = 86400000; // 24 hours
+	private static readonly GEOCODE_CONCURRENCY = 5;
 
 	constructor(
 		@InjectRepository(Attendance)
@@ -77,20 +77,17 @@ export class MapDataReportGenerator {
 		return `${this.CACHE_PREFIX}org${organisationId}_${branchId || 'all'}_${userId || 'all'}`;
 	}
 
-	private async getCachedGeocode(latitude: number, longitude: number): Promise<string | null> {
-		const roundedLat = Math.round(latitude * 10000) / 10000;
-		const roundedLng = Math.round(longitude * 10000) / 10000;
-		const cacheKey = `geocode:${roundedLat}_${roundedLng}`;
-		return await this.cacheManager.get<string>(cacheKey);
+	/** Round to 4 decimal places (~11m) for consistent cache/address map keys. Matches GoogleMapsService. */
+	private coordKey(latitude: number, longitude: number): string {
+		const lat = Math.round(Number(latitude) * 10000) / 10000;
+		const lng = Math.round(Number(longitude) * 10000) / 10000;
+		return `${lat}_${lng}`;
 	}
 
-	private async setCachedGeocode(latitude: number, longitude: number, address: string): Promise<void> {
-		const roundedLat = Math.round(latitude * 10000) / 10000;
-		const roundedLng = Math.round(longitude * 10000) / 10000;
-		const cacheKey = `geocode:${roundedLat}_${roundedLng}`;
-		await this.cacheManager.set(cacheKey, address, this.GEOCODE_CACHE_TTL);
-	}
-
+	/**
+	 * Generates map report data for the organisation (leads, visits, attendance, clients, competitors, etc.).
+	 * Response is Leaflet-ready: every marker has position [lat, lng], latitude, longitude, and markerType for styling.
+	 */
 	async generate(params: MapDataRequestParams): Promise<Record<string, any>> {
 		const cacheKey = this.getCacheKey(params.organisationId, params.branchId, params.userId);
 		
@@ -212,6 +209,7 @@ export class MapDataReportGenerator {
 				where: {
 					organisation: { uid: organisationId },
 					...(branchId ? { branch: { uid: branchId } } : {}),
+					...(userId ? { owner: { uid: userId } } : {}),
 					status: In([AttendanceStatus.PRESENT, AttendanceStatus.ON_BREAK]),
 					// Remove date restriction to get current active attendance regardless of when it started
 					// checkIn: MoreThanOrEqual(todayStart), // Removed - was too restrictive
@@ -224,6 +222,7 @@ export class MapDataReportGenerator {
 				where: {
 					organisation: { uid: organisationId },
 					...(branchId ? { branch: { uid: branchId } } : {}),
+					...(userId ? { owner: { uid: userId } } : {}),
 					checkIn: MoreThanOrEqual(subDays(new Date(), 7)),
 				},
 					relations: ['owner', 'branch', 'organisation'],
@@ -287,6 +286,7 @@ export class MapDataReportGenerator {
 					where: {
 						organisationUid: organisation.clerkOrgId,
 						...(branchId ? { branchUid: branchId } : {}),
+						...(userId ? { owner: { uid: userId } } : {}),
 						isDeleted: false,
 					},
 					relations: ['owner', 'client', 'interactions'],
@@ -310,6 +310,7 @@ export class MapDataReportGenerator {
 					where: {
 						organisation: { uid: organisationId },
 						...(branchId ? { branch: { uid: branchId } } : {}),
+						...(userId ? { owner: { uid: userId } } : {}),
 						isDeleted: false,
 						createdAt: MoreThanOrEqual(subDays(new Date(), 30)),
 					},
@@ -322,6 +323,7 @@ export class MapDataReportGenerator {
 					where: {
 						organisationUid: organisation.clerkOrgId,
 						...(branchId ? { branch: { uid: branchId } } : {}),
+						...(userId ? { owner: { uid: userId } } : {}),
 					},
 					relations: ['owner', 'client', 'branch', 'organisation'],
 					take: 200,
@@ -331,6 +333,7 @@ export class MapDataReportGenerator {
 					where: {
 						organisation: { uid: organisationId },
 						...(branchId ? { branch: { uid: branchId } } : {}),
+						...(userId ? { creator: { uid: userId } } : {}),
 						updatedAt: MoreThanOrEqual(subDays(new Date(), 30)),
 					},
 					relations: ['creator', 'branch', 'organisation'],
@@ -342,6 +345,7 @@ export class MapDataReportGenerator {
 					where: {
 						organisation: { uid: organisationId },
 						...(branchId ? { branch: { uid: branchId } } : {}),
+						...(userId ? { owner: { uid: userId } } : {}),
 						isDeleted: false,
 					},
 					relations: ['owner', 'branch', 'organisation'],
@@ -352,35 +356,58 @@ export class MapDataReportGenerator {
 
 			this.logger.log(`Fetched: ${activeAttendance.length} active, ${recentAttendance.length} recent attendance, ${clients.length} clients, ${competitors.length} competitors, ${quotationsRaw.length} quotations, ${leads.length} leads, ${journals.length} journals, ${checkIns.length} checkIns, ${tasks.length} tasks, ${claims.length} claims`);
 
-			// Helper function to reverse geocode coordinates with caching
-			const geocodeLocation = async (latitude: number, longitude: number, fallback: string): Promise<string> => {
-				if (!latitude || !longitude) return fallback;
-				
-				const cachedAddress = await this.getCachedGeocode(latitude, longitude);
-				if (cachedAddress) {
-					return cachedAddress;
-				}
+			// Collect unique coordinates that need geocoding (from attendance and recent attendance)
+			const uniqueCoordKeys = new Set<string>();
+			const addCoord = (lat: number | null | undefined, lng: number | null | undefined) => {
+				if (lat != null && lng != null) uniqueCoordKeys.add(this.coordKey(lat, lng));
+			};
+			for (const a of activeAttendance) {
+				addCoord(a.checkInLatitude, a.checkInLongitude);
+			}
+			for (const a of recentAttendance) {
+				addCoord(a.checkInLatitude, a.checkInLongitude);
+				addCoord(a.checkOutLatitude, a.checkOutLongitude);
+				addCoord(a.breakLatitude, a.breakLongitude);
+			}
 
-				try {
-					const geocodingResult = await this.googleMapsService.reverseGeocode({
-						latitude: Number(latitude),
-						longitude: Number(longitude)
-					});
-					const address = geocodingResult.formattedAddress || fallback;
-					await this.setCachedGeocode(latitude, longitude, address);
-					return address;
-				} catch (error) {
-					this.logger.debug(`Failed to geocode location ${latitude}, ${longitude}: ${error.message}`);
-					return fallback;
-				}
+			// Resolve each unique coordinate once (GoogleMapsService cache is used; concurrency limit to avoid queue storm)
+			const addressMap = new Map<string, string>();
+			const coordsToResolve = Array.from(uniqueCoordKeys).map((key) => {
+				const [lat, lng] = key.split('_').map(Number);
+				return { key, lat, lng };
+			});
+			const concurrency = MapDataReportGenerator.GEOCODE_CONCURRENCY;
+			for (let i = 0; i < coordsToResolve.length; i += concurrency) {
+				const chunk = coordsToResolve.slice(i, i + concurrency);
+				await Promise.all(
+					chunk.map(async ({ key, lat, lng }) => {
+						try {
+							const result = await this.googleMapsService.reverseGeocode({
+								latitude: lat,
+								longitude: lng,
+							});
+							addressMap.set(key, result.formattedAddress ?? 'Address unavailable');
+						} catch (error) {
+							this.logger.debug(`Failed to geocode ${lat}, ${lng}: ${(error as Error).message}`);
+							addressMap.set(key, 'Address unavailable');
+						}
+					}),
+				);
+			}
+			this.logger.log(
+				`Reverse geocode: ${coordsToResolve.length} unique coordinates resolved for map markers`,
+			);
+
+			const getAddress = (latitude: number, longitude: number, fallback: string): string => {
+				if (!latitude || !longitude) return fallback;
+				return addressMap.get(this.coordKey(latitude, longitude)) ?? fallback;
 			};
 
 			// Initialize allMarkers array to collect all markers
 			const allMarkers: any[] = [];
 
 			// Process active attendance (check-ins)
-			const workers = await Promise.all(
-				activeAttendance
+			const workers = activeAttendance
 				.filter((a) => {
 					const hasLocation = a.checkInLatitude && a.checkInLongitude;
 					if (!hasLocation) {
@@ -388,16 +415,13 @@ export class MapDataReportGenerator {
 					}
 					return hasLocation;
 				})
-					.map(async (a) => {
+				.map((a) => {
 					this.logger.debug(`Mapping active worker data for ${a.owner?.name} (${a.owner?.uid})`);
-						
-						// Reverse geocode check-in location
-						const address = await geocodeLocation(
-							Number(a.checkInLatitude),
-							Number(a.checkInLongitude),
-							a.checkInNotes || 'Unknown Location'
-						);
-
+					const address = getAddress(
+						Number(a.checkInLatitude),
+						Number(a.checkInLongitude),
+						a.checkInNotes || 'Unknown Location',
+					);
 					return {
 						id: `attendance-${a.uid}`,
 						name: a.owner?.name || 'Unknown Worker',
@@ -460,25 +484,20 @@ export class MapDataReportGenerator {
 								photoURL: a.owner.photoURL || a.owner.avatar
 							} : null
 						};
-					})
-			);
-			
+				});
+
 			allMarkers.push(...workers);
 
 			// Process shift start markers
-			const shiftStartMarkers = await Promise.all(
-				recentAttendance
-				.filter((a) => a.checkInLatitude && a.checkInLongitude && 
-					a.checkIn >= yesterdayStart && !a.checkOut)
-					.map(async (a) => {
-						// Reverse geocode the check-in location
-						const address = await geocodeLocation(
-							Number(a.checkInLatitude),
-							Number(a.checkInLongitude),
-							a.checkInNotes || 'Shift Start Location'
-						);
-
-						return {
+			const shiftStartMarkers = recentAttendance
+				.filter((a) => a.checkInLatitude && a.checkInLongitude && a.checkIn >= yesterdayStart && !a.checkOut)
+				.map((a) => {
+					const address = getAddress(
+						Number(a.checkInLatitude),
+						Number(a.checkInLongitude),
+						a.checkInNotes || 'Shift Start Location',
+					);
+					return {
 					id: `shift-start-${a.uid}`,
 					name: `${a.owner?.name || 'Unknown'} - Shift Start`,
 					position: [Number(a.checkInLatitude), Number(a.checkInLongitude)] as [number, number],
@@ -506,24 +525,20 @@ export class MapDataReportGenerator {
 								photoURL: a.owner.photoURL || a.owner.avatar
 							} : null
 						};
-					})
-			);
+				});
 
 			allMarkers.push(...shiftStartMarkers);
 
 			// Process shift end markers
-			const shiftEndMarkers = await Promise.all(
-				recentAttendance
+			const shiftEndMarkers = recentAttendance
 				.filter((a) => a.checkOutLatitude && a.checkOutLongitude && a.checkOut)
-					.map(async (a) => {
-						// Reverse geocode the check-out location
-						const address = await geocodeLocation(
-							Number(a.checkOutLatitude),
-							Number(a.checkOutLongitude),
-							a.checkOutNotes || 'Shift End Location'
-						);
-
-						return {
+				.map((a) => {
+					const address = getAddress(
+						Number(a.checkOutLatitude),
+						Number(a.checkOutLongitude),
+						a.checkOutNotes || 'Shift End Location',
+					);
+					return {
 					id: `shift-end-${a.uid}`,
 					name: `${a.owner?.name || 'Unknown'} - Shift End`,
 					position: [Number(a.checkOutLatitude), Number(a.checkOutLongitude)] as [number, number],
@@ -554,24 +569,20 @@ export class MapDataReportGenerator {
 								photoURL: a.owner.photoURL || a.owner.avatar
 							} : null
 						};
-					})
-			);
+				});
 
 			allMarkers.push(...shiftEndMarkers);
 
 			// Process break start markers
-			const breakStartMarkers = await Promise.all(
-				recentAttendance
+			const breakStartMarkers = recentAttendance
 				.filter((a) => a.breakLatitude && a.breakLongitude && a.breakStartTime && !a.breakEndTime)
-					.map(async (a) => {
-						// Reverse geocode the break location
-						const address = await geocodeLocation(
-							Number(a.breakLatitude),
-							Number(a.breakLongitude),
-							a.breakNotes || 'Break Location'
-						);
-
-						return {
+				.map((a) => {
+					const address = getAddress(
+						Number(a.breakLatitude),
+						Number(a.breakLongitude),
+						a.breakNotes || 'Break Location',
+					);
+					return {
 					id: `break-start-${a.uid}`,
 					name: `${a.owner?.name || 'Unknown'} - Break Start`,
 					position: [Number(a.breakLatitude), Number(a.breakLongitude)] as [number, number],
@@ -600,24 +611,20 @@ export class MapDataReportGenerator {
 								photoURL: a.owner.photoURL || a.owner.avatar
 							} : null
 						};
-					})
-			);
+				});
 
 			allMarkers.push(...breakStartMarkers);
 
 			// Process break end markers
-			const breakEndMarkers = await Promise.all(
-				recentAttendance
-					.filter((a) => a.breakLatitude && a.breakLongitude && a.breakEndTime)
-					.map(async (a) => {
-						// Reverse geocode the break end location
-						const address = await geocodeLocation(
-							Number(a.breakLatitude),
-							Number(a.breakLongitude),
-							a.breakNotes || 'Break End Location'
-						);
-
-						return {
+			const breakEndMarkers = recentAttendance
+				.filter((a) => a.breakLatitude && a.breakLongitude && a.breakEndTime)
+				.map((a) => {
+					const address = getAddress(
+						Number(a.breakLatitude),
+						Number(a.breakLongitude),
+						a.breakNotes || 'Break End Location',
+					);
+					return {
 							id: `break-end-${a.uid}`,
 							name: `${a.owner?.name || 'Unknown'} - Break End`,
 							position: [Number(a.breakLatitude), Number(a.breakLongitude)] as [number, number],
@@ -648,8 +655,7 @@ export class MapDataReportGenerator {
 								photoURL: a.owner.photoURL || a.owner.avatar
 							} : null
 						};
-					})
-			);
+				});
 
 			allMarkers.push(...breakEndMarkers);
 			
@@ -1117,10 +1123,27 @@ export class MapDataReportGenerator {
 						});
 
 						if (ownerAttendance?.checkInLatitude && ownerAttendance?.checkInLongitude) {
-							const address = await geocodeLocation(
-								Number(ownerAttendance.checkInLatitude),
-								Number(ownerAttendance.checkInLongitude),
-								ownerAttendance.checkInNotes || 'Claim Location'
+							const lat = Number(ownerAttendance.checkInLatitude);
+							const lng = Number(ownerAttendance.checkInLongitude);
+							const key = this.coordKey(lat, lng);
+							if (!addressMap.has(key)) {
+								try {
+									const result = await this.googleMapsService.reverseGeocode({
+										latitude: lat,
+										longitude: lng,
+									});
+									addressMap.set(key, result.formattedAddress ?? 'Claim Location');
+								} catch (error) {
+									this.logger.debug(
+										`Failed to geocode claim location ${lat}, ${lng}: ${(error as Error).message}`,
+									);
+									addressMap.set(key, 'Claim Location');
+								}
+							}
+							const address = getAddress(
+								lat,
+								lng,
+								ownerAttendance.checkInNotes || 'Claim Location',
 							);
 
 							claimMarkers.push({

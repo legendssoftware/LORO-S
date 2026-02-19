@@ -148,56 +148,80 @@ Real-time map visualization data including employee locations, client locations,
 		description: 'User ID for authorization context (optional)',
 	})
 	@ApiOkResponse({
-		description: 'Map data retrieved successfully',
+		description: 'Map data retrieved successfully. Response is Leaflet-ready JSON: every marker has position [lat, lng], latitude, longitude, and markerType for styling.',
 		schema: {
 			type: 'object',
 			properties: {
-				data: {
+				workers: {
+					type: 'array',
+					description: 'Currently checked-in workers (markerType: check-in)',
+				},
+				clients: {
+					type: 'array',
+					description: 'Client locations with full details',
+				},
+				competitors: {
+					type: 'array',
+					description: 'Competitor locations',
+				},
+				quotations: {
+					type: 'array',
+					description: 'Recent quotations at client locations',
+				},
+				leads: {
+					type: 'array',
+					description: 'Leads with location (markerType: lead)',
+				},
+				shiftStarts: {
+					type: 'array',
+					description: 'Attendance shift start locations (markerType: shift-start)',
+				},
+				shiftEnds: {
+					type: 'array',
+					description: 'Attendance shift end locations (markerType: shift-end)',
+				},
+				checkIns: {
+					type: 'array',
+					description: 'Client visit / check-in locations (markerType: check-in-visit)',
+				},
+				allMarkers: {
+					type: 'array',
+					description: 'All markers combined for Leaflet; filter client-side by markerType. Each item has id, name, position [lat,lng], latitude, longitude, markerType.',
+				},
+				events: {
+					type: 'array',
+					description: 'Recent events timeline',
+				},
+				mapConfig: {
 					type: 'object',
+					description: 'Map configuration for initial view',
 					properties: {
-						workers: { 
-							type: 'array',
-							description: 'Array of workers with location data and check-in status'
-						},
-						clients: { 
-							type: 'array',
-							description: 'Array of clients with comprehensive business information'
-						},
-						competitors: { 
-							type: 'array',
-							description: 'Array of competitors with threat analysis data'
-						},
-						quotations: { 
-							type: 'array',
-							description: 'Array of recent quotations mapped to client locations'
-						},
-						events: { 
-							type: 'array',
-							description: 'Array of recent events (check-ins, tasks, leads, etc.)'
-						},
-						mapConfig: {
+						defaultCenter: {
 							type: 'object',
-							description: 'Map configuration including default center and regions',
 							properties: {
-								defaultCenter: {
-									type: 'object',
-									properties: {
-										lat: { type: 'number' },
-										lng: { type: 'number' }
-									}
+								lat: { type: 'number' },
+								lng: { type: 'number' },
+							},
+						},
+						orgRegions: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									name: { type: 'string' },
+									center: { type: 'object' },
+									zoom: { type: 'number' },
 								},
-								orgRegions: { type: 'array' }
-							}
-						}
+							},
+						},
 					},
 				},
-				summary: {
+				analytics: {
 					type: 'object',
+					description: 'Optional summary (totalMarkers, markerBreakdown)',
 					properties: {
-						totalWorkers: { type: 'number' },
-						totalClients: { type: 'number' },
-						totalCompetitors: { type: 'number' },
-						totalQuotations: { type: 'number' },
+						totalMarkers: { type: 'number' },
+						markerBreakdown: { type: 'object' },
 					},
 				},
 			},
@@ -214,10 +238,10 @@ Real-time map visualization data including employee locations, client locations,
 	) {
 		this.logger.log(`Getting map data - Query params: orgId=${queryOrgId}, branchId=${queryBranchId}, userId=${queryUserId}`);
 
-		// Use query parameters or fall back to user's organization/branch
+		// Use query parameters or fall back to user's organization/branch. Only pass userId when client sends it (so "All users" returns org-wide data).
 		const orgIdRaw = queryOrgId ? parseInt(queryOrgId, 10) : (request.user.org?.uid || request.user.organisationRef);
 		const branchIdRaw = queryBranchId ? parseInt(queryBranchId, 10) : request.user.branch?.uid;
-		const userId = queryUserId ? parseInt(queryUserId, 10) : request.user.uid;
+		const userId = queryUserId ? parseInt(queryUserId, 10) : undefined;
 
 		// Convert to numbers
 		const orgId = typeof orgIdRaw === 'string' ? parseInt(orgIdRaw, 10) : orgIdRaw;
