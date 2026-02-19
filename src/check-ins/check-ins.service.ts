@@ -53,6 +53,50 @@ export class CheckInsService {
 	}
 
 	/**
+	 * Generate cache key with consistent prefix (same pattern as UserService).
+	 * @param key - The key identifier (uid, list params, etc.)
+	 * @returns Formatted cache key with prefix
+	 */
+	private getCacheKey(key: string | number): string {
+		return `${this.CACHE_PREFIX}${key}`;
+	}
+
+	/**
+	 * List cache key for getAllCheckIns. Deterministic so get and invalidate stay in sync.
+	 */
+	private getListCacheKey(
+		orgId: string,
+		hasElevatedAccess: boolean,
+		clerkUserId?: string,
+		userUid?: string,
+		startDate?: Date,
+		endDate?: Date,
+	): string {
+		const scope = hasElevatedAccess ? 'all' : clerkUserId ?? 'none';
+		const user = userUid ?? 'none';
+		const start = startDate ? startDate.toISOString() : 'none';
+		const end = endDate ? endDate.toISOString() : 'none';
+		return this.getCacheKey(`list_${orgId}_${scope}_${user}_${start}_${end}`);
+	}
+
+	/**
+	 * Clear all check-ins list cache so next getAllCheckIns returns fresh data (same manner as UserService invalidateUserCache).
+	 * Called after check-in and check-out writes.
+	 */
+	private async clearCheckInsListCache(): Promise<void> {
+		try {
+			const keys = await this.cacheManager.store.keys();
+			const keysToDelete = keys.filter((key: string) => key.startsWith(this.CACHE_PREFIX));
+			await Promise.all(keysToDelete.map((key: string) => this.cacheManager.del(key)));
+			if (keysToDelete.length > 0) {
+				this.logger.debug(`Cleared ${keysToDelete.length} check-ins cache key(s)`);
+			}
+		} catch (error) {
+			this.logger.error('Error clearing check-ins cache:', (error as Error).message);
+		}
+	}
+
+	/**
 	 * Resolves Clerk org ID (string) to organisation numeric uid.
 	 * Looks up by clerkOrgId or ref. Returns null if not found.
 	 */
@@ -457,6 +501,8 @@ export class CheckInsService {
 			}
 
 			this.logger.debug(`[${operationId}] Check-in record created successfully with ID: ${checkIn.uid}`);
+
+			await this.clearCheckInsListCache();
 
 			// ============================================================
 			// EARLY RETURN: Respond to client immediately after successful save
@@ -1018,6 +1064,8 @@ export class CheckInsService {
 
 			await this.checkInRepository.update(checkIn.uid, updateData);
 
+			await this.clearCheckInsListCache();
+
 			// ============================================================
 			// EARLY RETURN: Respond to client immediately after successful update
 			// ============================================================
@@ -1325,6 +1373,22 @@ export class CheckInsService {
 			this.logger.log(
 				`[${operationId}] getAllCheckIns entry: orgId=${orgId}, clerkUserId=${clerkUserId ?? 'n/a'}, userAccessLevel=${userAccessLevel ?? 'n/a'}, hasElevatedAccess=${hasElevatedAccess}, userUid=${userUid ?? 'n/a'}, startDate=${startDate?.toISOString() ?? 'n/a'}, endDate=${endDate?.toISOString() ?? 'n/a'}. No branch filter; org-scoped for elevated, owner-only for regular.`,
 			);
+
+			// Read-through cache (same pattern as UserService)
+			const listCacheKey = this.getListCacheKey(
+				orgId,
+				hasElevatedAccess,
+				clerkUserId,
+				userUid,
+				startDate,
+				endDate,
+			);
+			const cached = await this.cacheManager.get<{ message: string; checkIns: any[] }>(listCacheKey);
+			if (cached) {
+				this.logger.debug(`[${operationId}] Returning cached check-ins list (${cached.checkIns?.length ?? 0} items)`);
+				return cached;
+			}
+
 			this.logger.debug(`[${operationId}] Building query with filters for org: ${orgId}, elevated: ${hasElevatedAccess}`);
 
 			const queryBuilder = this.checkInRepository
@@ -1378,6 +1442,9 @@ export class CheckInsService {
 				message: process.env.SUCCESS_MESSAGE || 'Success',
 				checkIns,
 			};
+
+			await this.cacheManager.set(listCacheKey, response, this.CACHE_TTL);
+			this.logger.debug(`[${operationId}] Cached check-ins list with key: ${listCacheKey}`);
 
 			this.logger.log(`[${operationId}] Successfully retrieved ${checkIns.length} check-ins. Returning ${checkIns.length} check-ins.`);
 			return response;
